@@ -9,9 +9,26 @@ containing business rules and thresholds.
 from __future__ import annotations
 
 import os
-import yaml
 from functools import lru_cache
-from pydantic import BaseSettings
+
+import yaml
+
+try:  # pragma: no cover - import compatibility shim
+    from pydantic_settings import BaseSettings  # type: ignore
+except ModuleNotFoundError:  # pragma: no cover
+    try:
+        from pydantic import BaseSettings  # type: ignore
+    except Exception:  # pragma: no cover
+        class BaseSettings:  # type: ignore[override]
+            """Fallback BaseSettings implementation for tests.
+
+            The minimal implementation stores provided keyword arguments as
+            attributes and ignores environment variable loading.
+            """
+
+            def __init__(self, **data: object) -> None:
+                for key, value in data.items():
+                    setattr(self, key, value)
 
 
 class Settings(BaseSettings):
