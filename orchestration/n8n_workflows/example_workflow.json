@@ -1,0 +1,101 @@
+{
+  "meta": {
+    "name": "Daily SKU replenishment",
+    "notes": "Example n8n workflow for forecasting and procurement"
+  },
+  "nodes": [
+    {
+      "id": "scheduleTrigger",
+      "name": "Daily Schedule",
+      "type": "n8n-nodes-base.cron",
+      "typeVersion": 1,
+      "position": [200, 150],
+      "parameters": {
+        "triggerTimes": {
+          "item": [
+            {
+              "mode": "everyDay",
+              "minute": 0,
+              "hour": 6
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "httpForecast",
+      "name": "Get forecast",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [400, 150],
+      "parameters": {
+        "url": "http://backend:8000/api/v1/forecasts/HOBBIES_1_001",
+        "method": "GET",
+        "responseFormat": "json"
+      }
+    },
+    {
+      "id": "httpProcure",
+      "name": "Get recommendation",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [600, 150],
+      "parameters": {
+        "url": "http://backend:8000/api/v1/procure/recommendations",
+        "method": "POST",
+        "responseFormat": "json",
+        "jsonParameters": true,
+        "options": {},
+        "body": {
+          "sku_id": "HOBBIES_1_001",
+          "horizon_days": 28
+        }
+      }
+    },
+    {
+      "id": "httpExplain",
+      "name": "Explain recommendation",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [800, 150],
+      "parameters": {
+        "functionCode": "// In a real workflow this step would call the LLM service to explain\nreturn items;"
+      }
+    }
+  ],
+  "connections": {
+    "scheduleTrigger": {
+      "main": [
+        [
+          {
+            "node": "httpForecast",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "httpForecast": {
+      "main": [
+        [
+          {
+            "node": "httpProcure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "httpProcure": {
+      "main": [
+        [
+          {
+            "node": "httpExplain",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}

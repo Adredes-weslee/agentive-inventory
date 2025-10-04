@@ -1,0 +1,9 @@
+# Guardrails and threshold configuration.
+#
+# These values determine when procurement recommendations should be auto‑approved
+# versus flagged for human intervention.  Tune them to suit your business.
+
+auto_approval_limit: 1000    # Maximum spend (in your currency) that can be auto‑approved
+min_service_level: 0.90      # Minimum acceptable fill rate; below this triggers overrides
+min_gmroi_delta: 0.05        # Minimum expected improvement in GMROI to justify a purchase
+max_cash_outlay: 10000       # Maximum available cash for inventory purchases per cycle

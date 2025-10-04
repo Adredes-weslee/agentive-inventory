@@ -1,0 +1,23 @@
+services:
+  - type: web
+    name: agentive-api
+    env: python
+    rootDir: backend
+    buildCommand: pip install --no-cache-dir -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: API_HOST
+        value: 0.0.0.0
+      - key: API_PORT
+        value: "8000"
+  - type: web
+    name: agentive-ui
+    env: python
+    rootDir: frontend
+    buildCommand: pip install --no-cache-dir -r requirements.txt
+    startCommand: streamlit run app.py --server.port $PORT --server.address 0.0.0.0
+    envVars:
+      - key: API_URL
+        value: https://agentive-api.onrender.com/api/v1

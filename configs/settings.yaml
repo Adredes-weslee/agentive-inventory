@@ -1,0 +1,23 @@
+# Business and operational context configuration.
+#
+# The MCP (Mutable Context Protocol) idea described in the solution architecture uses a
+# serialised `context_object` passed between services and agents.  This file holds
+# default values for that context.  You may override any of these at runtime via
+# environment variables or via the Streamlit UI.
+
+environment: "development"
+default_service_level: 0.95  # desired probability of not stocking out
+lead_time_days: 7           # typical supplier lead time in days
+
+# External feeds: these can be used to incorporate knowledge of disruptions
+disruption_feeds:
+  - name: "news_api"
+    url: "https://example.com/api/news"
+    api_key: "your_api_key"
+
+# Promotion calendar: important dates that may affect demand
+promo_calendar:
+  - date: "2025-11-27"  # Example: Black Friday
+    description: "Black Friday sales"
+  - date: "2025-12-25"  # Example: Christmas
+    description: "Christmas holiday"
