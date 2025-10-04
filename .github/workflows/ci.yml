@@ -23,4 +23,4 @@ jobs:
       - name: Type check backend
         run: mypy backend/app
       - name: Run tests
-        run: pytest -q || true  # No tests yet; ignore failure
+        run: pytest backend

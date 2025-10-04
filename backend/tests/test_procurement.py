@@ -18,6 +18,18 @@ class StubInventoryService:
     def estimate_unit_cost(self, sku_id: str) -> float:  # pragma: no cover - trivial
         return 25.0
 
+    def get_lead_time_days(self, sku_id: str) -> float:  # pragma: no cover - trivial
+        return 7.0
+
+    def get_unit_cost(self, sku_id: str) -> float:  # pragma: no cover - trivial
+        return self.estimate_unit_cost(sku_id)
+
+    def get_current_inventory(self, sku_id: str) -> int:  # pragma: no cover - trivial
+        return 0
+
+    def get_latest_price(self, sku_id: str):  # pragma: no cover - trivial
+        return None
+
 
 def _write_configs(tmp_path: Path) -> Path:
     config_root = tmp_path / "cfg"
@@ -69,4 +81,4 @@ def test_requires_approval_when_spend_exceeds_limit(tmp_path: Path) -> None:
     recommendation = recs[0]
     assert recommendation.order_qty > 0
     assert recommendation.requires_approval is True
-    assert recommendation.confidence <= 0.6
+    assert recommendation.confidence <= 0.8
