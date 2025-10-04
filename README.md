@@ -75,6 +75,15 @@ For privacy and licensing reasons these files are **not included** in this repos
 
 2. Download the three M5 dataset files from Kaggle and place them in the `data/` folder.
 
+   ```text
+   data/
+   ├── sales_train_validation.csv
+   ├── sell_prices.csv
+   └── calendar.csv
+   ```
+
+   The service validates that each file exists before serving forecasts or procurement guidance.
+
 3. Copy `.env.example` to `.env` and fill in your configuration, especially your `GEMINI_API_KEY` if you plan to use the optional LLM features.
 
 4. Build and run the backend locally using Docker Compose:
@@ -86,6 +95,19 @@ For privacy and licensing reasons these files are **not included** in this repos
    This will start the FastAPI backend on `http://localhost:8000` and the Streamlit UI on `http://localhost:8501`.
 
 5. Navigate to the Streamlit UI to explore forecasts and procurement recommendations.
+
+6. (Optional) Run the backend unit tests locally to verify the deterministic forecasting and procurement guardrails:
+
+   ```bash
+   poetry run pytest backend/tests
+   ```
+
+   The tests use lightweight synthetic M5 extracts so they execute quickly without the full dataset.
+
+### Configuration quick reference
+
+- `configs/settings.yaml` — operational context such as `service_level_target`, `lead_time_days`, `carrying_cost_rate`, `order_cost` and `gross_margin_rate`. These values feed directly into the EOQ/ROP calculations.
+- `configs/thresholds.yaml` — guardrails including `auto_approval_limit`, `min_service_level`, `gmroi_min` and `max_cash_outlay`. Recommendations that breach these thresholds are flagged for manual approval in the UI.
 
 ## Design philosophy
 

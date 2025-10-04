@@ -5,5 +5,5 @@
 
 auto_approval_limit: 1000    # Maximum spend (in your currency) that can be auto‑approved
 min_service_level: 0.90      # Minimum acceptable fill rate; below this triggers overrides
-min_gmroi_delta: 0.05        # Minimum expected improvement in GMROI to justify a purchase
+gmroi_min: 1.10              # Minimum GMROI required for automatic approval
 max_cash_outlay: 10000       # Maximum available cash for inventory purchases per cycle

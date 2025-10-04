@@ -1,15 +1,9 @@
-"""
-Routes for procurement recommendations.
+"""Routes for procurement recommendations."""
 
-This endpoint accepts a SKU identifier and optional context information
-and returns recommended reorder quantities.  It uses the forecasting
-service to obtain the demand forecast and then applies business guardrails
-to compute reorder points and quantities.
-"""
+from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
-from typing import List, Optional, Dict, Any
+from fastapi import APIRouter, HTTPException, status
+from pydantic import BaseModel, Field
 
 from ..services.forecasting_service import ForecastingService, ForecastResponse
 from ..services.procurement_service import ProcurementService, ReorderRec
@@ -21,25 +15,26 @@ _procurement_service = ProcurementService()
 
 
 class ProcurementRequest(BaseModel):
-    sku_id: str
-    horizon_days: Optional[int] = 28
-    context: Optional[Dict[str, Any]] = None
+    sku_id: str = Field(..., description="SKU identifier from the M5 dataset")
+    horizon_days: Optional[int] = Field(28, ge=1, le=365)
+    context: Optional[Dict[str, Any]] = Field(default_factory=dict)
 
 
 @router.post("/procure/recommendations", response_model=List[ReorderRec])
 async def get_recommendations(body: ProcurementRequest) -> List[ReorderRec]:
-    """Generate a purchase recommendation for a given SKU.
+    """Generate a purchase recommendation for a given SKU."""
 
-    A forecast will be computed using the forecasting service; then
-    the procurement service will decide how much to reorder based
-    on configured guardrails.
-    """
     try:
         forecast: ForecastResponse = _forecast_service.forecast(
-            sku_id=body.sku_id, horizon_days=body.horizon_days or 28
+            sku_id=body.sku_id,
+            horizon_days=int(body.horizon_days or 28),
         )
-    except FileNotFoundError as e:
-        raise HTTPException(status_code=500, detail=str(e))
-    except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
-    return _procurement_service.recommend(forecast, body.context or {})
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except ValueError as exc:
+        message = str(exc)
+        status_code = status.HTTP_404_NOT_FOUND if "SKU" in message else status.HTTP_400_BAD_REQUEST
+        raise HTTPException(status_code=status_code, detail=message) from exc
+
+    recommendations = _procurement_service.recommend(forecast, body.context or {})
+    return recommendations
