@@ -27,14 +27,27 @@ st.title("🔮 Forecasts")
 st.caption("Visualise deterministic forecasts generated from the Walmart M5 dataset.")
 
 with st.form(key="forecast_form"):
-    sku = st.text_input("SKU ID", value="HOBBIES_1_001", help="Enter an M5 item_id value, e.g. FOODS_3_090")
-    horizon = st.number_input("Horizon (days)", min_value=7, max_value=90, value=28, step=1)
+    sku = st.text_input(
+        "SKU ID",
+        value="HOBBIES_1_001",
+        help="Enter an M5 item_id value, e.g. FOODS_3_090",
+    )
+    horizon = st.slider(
+        "Horizon (days)",
+        min_value=7,
+        max_value=90,
+        value=28,
+        step=1,
+        help="Number of days to forecast ahead.",
+    )
     submitted = st.form_submit_button("Get forecast")
 
 if submitted:
     try:
         with st.spinner("Fetching forecast from API…"):
             payload = _fetch_forecast(sku, int(horizon))
+    except requests.Timeout:
+        st.error("The forecast request timed out. Please try again or adjust the horizon.")
     except requests.HTTPError as exc:
         detail = exc.response.json().get("detail") if exc.response is not None else str(exc)
         st.error(f"API error: {detail}")
@@ -47,12 +60,11 @@ if submitted:
         else:
             forecast_df["date"] = pd.to_datetime(forecast_df["date"])
             st.write("### Forecast overview")
-            st.dataframe(
-                forecast_df[["date", "mean", "lo", "hi", "confidence", "model"]].rename(
-                    columns={"mean": "mean_units", "lo": "lower", "hi": "upper"}
-                ),
-                use_container_width=True,
+            base_columns = ["date", "mean", "lo", "hi", "confidence", "model"]
+            table_df = forecast_df[[col for col in base_columns if col in forecast_df.columns]].rename(
+                columns={"mean": "mean_units", "lo": "lower", "hi": "upper"}
             )
+            st.dataframe(table_df, use_container_width=True)
 
             base = alt.Chart(forecast_df).encode(x="date:T")
             band = base.mark_area(opacity=0.2, color="steelblue").encode(y="lo:Q", y2="hi:Q")
