@@ -267,8 +267,14 @@ class ForecastingService:
         if not demand_cols:
             raise ValueError(f"No demand history found for SKU '{sku_id}'")
 
-        sku_row = sku_rows.iloc[0]
-        sku_series = pd.Series(sku_row[demand_cols].astype(float).values, index=demand_cols, name=sku_id)
+        demand_history = sku_rows[demand_cols].apply(pd.to_numeric, errors="coerce").fillna(0.0)
+        if len(sku_rows) > 1:
+            demand_series = demand_history.sum(axis=0)
+        else:
+            demand_series = demand_history.iloc[0]
+
+        demand_series = demand_series.astype(float)
+        sku_series = pd.Series(demand_series.values, index=demand_cols, name=sku_id)
         return sku_series.ffill().fillna(0.0)
 
     # ------------------------------------------------------------------
