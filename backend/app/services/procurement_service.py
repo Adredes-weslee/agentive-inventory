@@ -149,14 +149,20 @@ class ProcurementService:
 
         lead_time = context.get("lead_time_days")
         if lead_time is None:
-            lead_time = self.inventory_service.get_lead_time_days(sku_id)
+            get_lead_time = getattr(self.inventory_service, "get_lead_time_days", None)
+            lead_time = get_lead_time(sku_id) if callable(get_lead_time) else None
         lead_time = float(lead_time) if lead_time is not None else self.default_lead_time_days
         if lead_time <= 0:
             lead_time = self.default_lead_time_days
 
         unit_cost = context.get("unit_cost")
         if unit_cost is None:
-            unit_cost = self.inventory_service.get_unit_cost(sku_id)
+            get_unit_cost = getattr(self.inventory_service, "get_unit_cost", None)
+            if callable(get_unit_cost):
+                unit_cost = get_unit_cost(sku_id)
+            else:
+                estimate_cost = getattr(self.inventory_service, "estimate_unit_cost", None)
+                unit_cost = estimate_cost(sku_id) if callable(estimate_cost) else None
         unit_cost = float(unit_cost) if unit_cost is not None else 1.0
         if unit_cost <= 0:
             unit_cost = 1.0
@@ -187,9 +193,13 @@ class ProcurementService:
         if order_qty <= 0 and daily_mean > 0:
             order_qty = max(math.ceil(mu_l), 1)
 
-        current_inventory = self.inventory_service.get_current_inventory(sku_id)
+        get_inventory = getattr(self.inventory_service, "get_current_inventory", None)
+        current_inventory = get_inventory(sku_id) if callable(get_inventory) else 0
+        if not isinstance(current_inventory, (int, float)):
+            current_inventory = 0
         inventory_units_proxy = max(current_inventory, 1)
-        latest_price = self.inventory_service.get_latest_price(sku_id)
+        get_latest_price = getattr(self.inventory_service, "get_latest_price", None)
+        latest_price = get_latest_price(sku_id) if callable(get_latest_price) else None
         sell_price = None if latest_price is None else float(latest_price.sell_price)
         if not sell_price or sell_price <= 0:
             sell_price = unit_cost * (1.0 + self.default_margin_rate)
@@ -205,6 +215,8 @@ class ProcurementService:
         )
 
         confidence = max(min(forecast_confidence, 0.99), 0.01)
+        if requires_approval:
+            confidence = min(confidence, 0.6)
         reorder_point = int(max(round(reorder_point_val), 0))
         order_qty_int = int(max(order_qty, 0))
         gmroi_delta_val = float(gmroi_delta if math.isfinite(gmroi_delta) else 0.0)
