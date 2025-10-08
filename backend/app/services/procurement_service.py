@@ -201,7 +201,7 @@ class ProcurementService:
         requires_approval = (
             total_spend > self.auto_approval_limit
             or gmroi_delta < self.gmroi_min
-            or forecast_confidence < self.min_service_level
+            or service_level < self.min_service_level
         )
 
         confidence = max(min(forecast_confidence, 0.99), 0.01)
