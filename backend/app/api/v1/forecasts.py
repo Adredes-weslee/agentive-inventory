@@ -33,6 +33,16 @@ def _validate_sku(sku_id: str) -> None:
 
     has_sku: Callable[[str], bool]
     has_sku = getattr(_inventory_service, "has_sku", _inventory_service.sku_exists)
+    if getattr(_inventory_service, "sales_df", None) is None:
+        LOGGER.error("Inventory datasets missing while validating forecast request for sku_id=%s", sku_id)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=
+            _error_payload(
+                "data_unavailable",
+                "Required dataset files are missing. Please upload the M5 datasets and retry.",
+            ),
+        )
     if not has_sku(sku_id):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
