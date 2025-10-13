@@ -445,6 +445,179 @@ class ForecastingService:
         residuals = recent - in_sample_pred
         return mean_forecast, residuals, in_sample_pred
 
+    def _candidate_models(self, history_length: int, preferred: str, strict: bool) -> List[str]:
+        """Return the list of model candidates to evaluate."""
+
+        preferred = preferred or "sma"
+        candidates: List[str] = []
+
+        def _available(model_name: str) -> bool:
+            if model_name == "prophet" and not HAS_PROPHET:
+                return False
+            if model_name == "xgb" and not HAS_XGBOOST:
+                return False
+            return True
+
+        if strict:
+            return [preferred] if _available(preferred) else []
+
+        if history_length < max(self.XGB_LAGS) * 2:
+            priority = ["sma", preferred, "prophet"]
+        else:
+            priority = [preferred, "prophet", "xgb", "sma"]
+
+        for candidate in priority:
+            if candidate not in {"sma", "prophet", "xgb"}:
+                continue
+            if not _available(candidate):
+                continue
+            if candidate not in candidates:
+                candidates.append(candidate)
+
+        if "sma" not in candidates:
+            candidates.append("sma")
+
+        return candidates
+
+    def _forecast_with_history(
+        self,
+        history: pd.Series,
+        future_index: pd.DatetimeIndex,
+        preferred_model: str,
+        strict: bool,
+    ) -> tuple[pd.Series, pd.Series, pd.Series, str]:
+        """Return forecast components for an explicit history slice."""
+
+        candidates = self._candidate_models(len(history), preferred_model, strict)
+        if not candidates:
+            raise ValueError(
+                f"Requested model '{preferred_model}' is not available in the current environment."
+            )
+
+        last_error: ValueError | None = None
+
+        for candidate in candidates:
+            try:
+                if candidate == "xgb":
+                    mean_forecast, residuals, _ = self._xgb_forecast(history, future_index)
+                    lower, upper = compute_pi(mean_forecast, residuals, self.z_value)
+                elif candidate == "prophet":
+                    (
+                        mean_forecast,
+                        lower,
+                        upper,
+                        _,
+                        _,
+                    ) = self._prophet_forecast(history, future_index)
+                else:
+                    mean_forecast, residuals, _ = self._sma_forecast(history, future_index)
+                    lower, upper = compute_pi(mean_forecast, residuals, self.z_value)
+
+                mean_forecast = mean_forecast.clip(lower=0.0)
+                lower = lower.clip(lower=0.0)
+                upper = upper.clip(lower=0.0)
+
+                return mean_forecast, lower, upper, candidate
+            except ValueError as exc:
+                last_error = exc
+                continue
+
+        assert last_error is not None
+        raise last_error
+
+    def backtest(
+        self,
+        sku_id: str,
+        window: int = 56,
+        horizon: int = 28,
+        step: int = 7,
+        model_hint: str = "auto",
+    ) -> dict[str, object]:
+        """Run a rolling-origin backtest for the specified SKU."""
+
+        if window <= 0 or horizon <= 0 or step <= 0:
+            raise ValueError("window, horizon, and step must be positive integers")
+
+        self._ensure_loaded()
+
+        try:
+            sku_history = self._sku_history(sku_id)
+        except ValueError as exc:
+            raise FileNotFoundError("M5 datasets appear to be missing required columns or entries.") from exc
+
+        history = sku_history.series.sort_index()
+
+        if len(history) < window + horizon:
+            raise ValueError("Insufficient history for the requested window and horizon combination.")
+
+        preferred_model = sku_history.model_class if model_hint == "auto" else model_hint
+        strict = model_hint != "auto"
+
+        dates: list[str] = []
+        actual_values: list[float] = []
+        predicted_values: list[float] = []
+        coverage_hits = 0
+        coverage_total = 0
+        model_used: str | None = None
+
+        start_index = window
+        last_start = len(history) - horizon
+
+        while start_index <= last_start:
+            train_slice = history.iloc[start_index - window : start_index]
+            future_slice = history.iloc[start_index : start_index + horizon]
+            future_index = future_slice.index
+
+            if train_slice.empty or len(future_slice) < horizon:
+                break
+
+            mean_forecast, lower, upper, chosen_model = self._forecast_with_history(
+                train_slice,
+                pd.DatetimeIndex(future_index),
+                preferred_model,
+                strict,
+            )
+
+            if model_used is None:
+                model_used = chosen_model
+
+            for dt, actual in future_slice.items():
+                prediction = float(mean_forecast.loc[dt])
+                lo = float(lower.loc[dt]) if dt in lower else 0.0
+                hi = float(upper.loc[dt]) if dt in upper else 0.0
+
+                dates.append(dt.date().isoformat())
+                actual_values.append(float(actual))
+                predicted_values.append(prediction)
+
+                coverage_total += 1
+                if lo <= actual <= hi:
+                    coverage_hits += 1
+
+            start_index += step
+
+        if not dates:
+            raise ValueError("Unable to generate backtest windows with the provided parameters.")
+
+        actual_arr = np.array(actual_values, dtype=float)
+        pred_arr = np.array(predicted_values, dtype=float)
+        mask = actual_arr != 0
+        if mask.any():
+            mape = float(np.mean(np.abs((actual_arr[mask] - pred_arr[mask]) / actual_arr[mask])))
+        else:
+            mape = 0.0
+
+        coverage = float(coverage_hits / coverage_total) if coverage_total else 0.0
+
+        return {
+            "dates": dates,
+            "y": [float(v) for v in actual_values],
+            "yhat": [float(v) for v in predicted_values],
+            "mape": mape,
+            "coverage": coverage,
+            "model_used": model_used or preferred_model,
+        }
+
     def forecast(self, sku_id: str, horizon_days: int = 28) -> ForecastResult:
         """Return a per-day forecast for the requested ``sku_id``."""
 
