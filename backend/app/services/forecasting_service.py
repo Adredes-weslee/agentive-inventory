@@ -190,7 +190,11 @@ class ForecastingService:
 
         self.service_level: float = 0.95
         self.z_value: float = NormalDist().inv_cdf(self.service_level)
-        self._a_class_cutoff: float | None = None
+
+        self.model_default: str = "sma"
+        self.model_portfolio: dict[str, str] = {"A": "xgb", "B": "prophet", "C": "sma"}
+        self._abc_cache: dict[str, str] = {}
+        self._abc_thresholds: tuple[float, float] | None = None
 
         self._load_configuration()
         self._load_data()
@@ -237,16 +241,122 @@ class ForecastingService:
                 LOGGER.exception("Failed to load sell price dataset at %s", sell_price_path)
 
         if self.sales_df is not None:
-            self._compute_a_class_cutoff()
+            self._build_abc_cache()
 
     # ------------------------------------------------------------------
-    def _compute_a_class_cutoff(self) -> None:
+    def _build_abc_cache(self) -> None:
         assert self.sales_df is not None
+
+        self._abc_cache.clear()
+        self._abc_thresholds = None
+
         demand_cols = [c for c in self.sales_df.columns if c.startswith("d_")]
         if not demand_cols:
             return
-        totals = self.sales_df[demand_cols].sum(axis=1)
-        self._a_class_cutoff = float(np.quantile(totals, 0.8))
+
+        demand_frame = (
+            self.sales_df[demand_cols]
+            .apply(pd.to_numeric, errors="coerce")
+            .fillna(0.0)
+        )
+        averages = demand_frame.mean(axis=1)
+        if averages.empty:
+            return
+
+        q80 = float(averages.quantile(0.8))
+        q50 = float(averages.quantile(0.5))
+        self._abc_thresholds = (q50, q80)
+
+        id_column: str | None = None
+        for candidate in ("id", "item_id"):
+            if candidate in self.sales_df.columns:
+                id_column = candidate
+                break
+
+        if id_column is not None:
+            for sku, avg in zip(self.sales_df[id_column], averages):
+                cls = self._class_from_average(float(avg))
+                if cls:
+                    self._abc_cache[str(sku)] = cls
+
+        if "item_id" in self.sales_df.columns:
+            grouped_totals = (
+                demand_frame.assign(item_id=self.sales_df["item_id"])
+                .groupby("item_id")
+                .sum()
+            )
+            for item_id, avg in grouped_totals.mean(axis=1).items():
+                cls = self._class_from_average(float(avg))
+                if cls:
+                    self._abc_cache[str(item_id)] = cls
+
+    # ------------------------------------------------------------------
+    def _class_from_average(self, average: float | None) -> str | None:
+        thresholds = self._abc_thresholds
+        if thresholds is None or average is None or np.isnan(average):
+            return None
+
+        q50, q80 = thresholds
+        if average >= q80:
+            return "A"
+        if average >= q50:
+            return "B"
+        return "C"
+
+    # ------------------------------------------------------------------
+    def _average_demand_for_sku(self, sku_id: str) -> float | None:
+        if self.sales_df is None:
+            return None
+
+        demand_cols = [c for c in self.sales_df.columns if c.startswith("d_")]
+        if not demand_cols:
+            return None
+
+        sku_rows = pd.DataFrame()
+        if "id" in self.sales_df.columns:
+            sku_rows = self.sales_df[self.sales_df["id"] == sku_id]
+            if sku_rows.empty and "item_id" in self.sales_df.columns:
+                sku_rows = self.sales_df[self.sales_df["item_id"] == sku_id]
+        elif "item_id" in self.sales_df.columns:
+            sku_rows = self.sales_df[self.sales_df["item_id"] == sku_id]
+
+        if sku_rows.empty:
+            return None
+
+        demand_history = sku_rows[demand_cols].apply(pd.to_numeric, errors="coerce").fillna(0.0)
+        if demand_history.empty:
+            return None
+
+        mean_per_row = demand_history.mean(axis=1)
+        if mean_per_row.empty:
+            return None
+
+        return float(mean_per_row.mean())
+
+    # ------------------------------------------------------------------
+    def _abc_class_for_sku(self, sku_id: str, series: pd.Series | None = None) -> str | None:
+        cached = self._abc_cache.get(sku_id)
+        if cached:
+            return cached
+
+        average: float | None = None
+        if series is not None and not series.empty:
+            average = float(series.mean())
+        else:
+            average = self._average_demand_for_sku(sku_id)
+
+        cls = self._class_from_average(average)
+        if cls:
+            self._abc_cache[sku_id] = cls
+        return cls
+
+    # ------------------------------------------------------------------
+    def _preferred_model_for_sku(self, sku_id: str, series: pd.Series | None = None) -> str:
+        abc_class = self._abc_class_for_sku(sku_id, series)
+        preferred = self.model_portfolio.get(abc_class or "", self.model_default)
+        if preferred not in {"sma", "prophet", "xgb"}:
+            return self.model_default
+        return preferred
 
     # ------------------------------------------------------------------
     def _ensure_loaded(self) -> None:
@@ -288,12 +398,8 @@ class ForecastingService:
         dates = self._map_days_to_dates(series.index)
         history = pd.Series(series.values, index=pd.DatetimeIndex(dates, name="date"))
 
-        is_a_class = False
-        if self._a_class_cutoff is not None:
-            total_demand = float(series.sum())
-            is_a_class = total_demand >= self._a_class_cutoff
+        model_class = self._preferred_model_for_sku(sku_id, series)
 
-        model_class = choose_model(is_a_class, HAS_PROPHET, HAS_XGBOOST)
         return _SkuHistory(
             sku_id=sku_id,
             series=history.sort_index(),
