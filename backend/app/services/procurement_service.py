@@ -5,7 +5,6 @@ from __future__ import annotations
 import logging
 import math
 import os
-from numbers import Real
 from typing import Any, Dict, Iterable, List, Tuple
 
 import numpy as np
@@ -196,30 +195,26 @@ class ProcurementService:
         if order_qty <= 0 and daily_mean > 0:
             order_qty = max(math.ceil(mu_l), 1)
 
-        get_inventory = getattr(self.inventory_service, "get_current_inventory", None)
-        current_inventory = get_inventory(sku_id) if callable(get_inventory) else 0
-        if isinstance(current_inventory, Real):
-            current_inventory = float(current_inventory)
-        else:
-            try:
-                current_inventory = float(current_inventory)
-            except (TypeError, ValueError):
-                LOGGER.warning(
-                    "Inventory service returned non-numeric inventory for %s; defaulting to 0",
-                    sku_id,
-                )
-                current_inventory = 0.0
-        if not math.isfinite(current_inventory) or current_inventory < 0:
-            current_inventory = 0.0
-        inventory_units_proxy = max(current_inventory, 1.0)
-        get_latest_price = getattr(self.inventory_service, "get_latest_price", None)
-        latest_price = get_latest_price(sku_id) if callable(get_latest_price) else None
-        sell_price = None if latest_price is None else float(latest_price.sell_price)
-        if not sell_price or sell_price <= 0:
-            sell_price = unit_cost * (1.0 + self.default_margin_rate)
+        margin_rate = float(context.get("margin_rate", self.default_margin_rate))
+        if margin_rate <= 0:
+            margin_rate = 0.30
 
-        margin_ratio = (sell_price - unit_cost) / unit_cost if unit_cost else 0.0
-        gmroi_delta = margin_ratio * (order_qty / inventory_units_proxy)
+        get_unit_price = getattr(self.inventory_service, "get_unit_price", None)
+        sell_price = get_unit_price(sku_id) if callable(get_unit_price) else None
+        if sell_price is None or sell_price <= 0:
+            get_latest_price = getattr(self.inventory_service, "get_latest_price", None)
+            latest_price = get_latest_price(sku_id) if callable(get_latest_price) else None
+            sell_price = None if latest_price is None else float(latest_price.sell_price)
+
+        if sell_price is None or sell_price <= 0:
+            sell_price = unit_cost * (1.0 + margin_rate)
+
+        gmroi_delta = self._gmroi_proxy(
+            order_qty=order_qty,
+            unit_cost=unit_cost,
+            price=sell_price,
+            mean_demand=daily_mean,
+        )
 
         total_spend = order_qty * unit_cost
         cash_budget = context.get("cash_budget")
@@ -265,3 +260,21 @@ class ProcurementService:
                 requires_approval=requires_approval,
             )
         ]
+
+    # ------------------------------------------------------------------
+    def _gmroi_proxy(self, order_qty: int, unit_cost: float, price: float, mean_demand: float) -> float:
+        """Approximate GMROI using price, cost and expected holding time."""
+
+        if order_qty <= 0 or unit_cost <= 0 or price <= 0:
+            return 0.0
+
+        demand = max(mean_demand, 0.0)
+        if demand <= 0:
+            return 0.0
+
+        turnover_days = max(order_qty / max(demand, 1e-6), 1.0)
+        inventory_cost = (order_qty / turnover_days) * unit_cost
+        if inventory_cost <= 0:
+            return 0.0
+
+        return float((price - unit_cost) / inventory_cost)
