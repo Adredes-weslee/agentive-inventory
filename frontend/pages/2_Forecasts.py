@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import os
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 import altair as alt
 import pandas as pd
@@ -13,6 +13,21 @@ import streamlit as st
 API_URL = os.getenv("API_URL", "http://localhost:8000/api/v1")
 
 
+@st.cache_data(ttl=300)
+def _get_catalog_ids(limit: int = 20) -> List[str]:
+    try:
+        response = requests.get(
+            f"{API_URL}/catalog/ids",
+            params={"limit": limit},
+            timeout=15,
+        )
+        response.raise_for_status()
+        return response.json().get("ids", [])
+    except Exception:
+        return []
+
+
+@st.cache_data(ttl=300)
 def _fetch_forecast(sku: str, horizon: int) -> Dict[str, Any]:
     response = requests.get(
         f"{API_URL}/forecasts/{sku}",
@@ -26,11 +41,22 @@ def _fetch_forecast(sku: str, horizon: int) -> Dict[str, Any]:
 st.title("🔮 Forecasts")
 st.caption("Visualise deterministic forecasts generated from the Walmart M5 dataset.")
 
+examples = _get_catalog_ids(limit=20)
 with st.form(key="forecast_form"):
-    sku = st.text_input(
-        "SKU ID",
-        value="HOBBIES_1_001",
-        help="Enter an M5 item_id value, e.g. FOODS_3_090",
+    sku = (
+        st.selectbox(
+            "M5 row id (e.g., FOODS_3_090_CA_1_validation)",
+            options=examples,
+            index=0,
+            placeholder="Type/choose an M5 id (not item_id)",
+            help="Enter the M5 *row id* exactly as in the CSV id column.",
+        )
+        if examples
+        else st.text_input(
+            "M5 row id",
+            value="FOODS_3_090_CA_1_validation",
+            help="Enter the M5 *row id*, not item_id. Example: FOODS_3_090_CA_1_validation",
+        )
     )
     horizon = st.slider(
         "Horizon (days)",
@@ -65,6 +91,12 @@ if submitted:
                 columns={"mean": "mean_units", "lo": "lower", "hi": "upper"}
             )
             st.dataframe(table_df, use_container_width=True)
+            st.download_button(
+                "Download CSV",
+                table_df.to_csv(index=False).encode("utf-8"),
+                file_name=f"forecast_{payload['sku_id']}.csv",
+                mime="text/csv",
+            )
 
             base = alt.Chart(forecast_df).encode(x="date:T")
             band = base.mark_area(opacity=0.2, color="steelblue").encode(y="lo:Q", y2="hi:Q")
