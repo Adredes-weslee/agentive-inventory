@@ -29,6 +29,13 @@ def backtest(
     model: Literal["auto", "sma", "prophet", "xgb"] = Query(
         "auto", description="Model to evaluate. 'auto' selects the recommended model."
     ),
+    cv: Literal["none", "store", "category"] = Query(
+        "none",
+        description=(
+            "Optional peer cross-validation summary: 'store' samples SKUs in the same store; "
+            "'category' samples SKUs in the same category."
+        ),
+    ),
 ):
     """Return rolling forecast accuracy metrics for the requested SKU."""
 
@@ -72,4 +79,49 @@ def backtest(
     result["coverage"] = (
         float(np.round(coverage, 6)) if coverage is not None and np.isfinite(coverage) else None
     )
+
+    if cv != "none":
+        sales_df = _inventory_service.sales_df
+        info = _inventory_service.get_sku_info(sku_id)
+        key_column = "store_id" if cv == "store" else "cat_id"
+        key_value = info.get(key_column) if info else None
+        if sales_df is not None and key_value is not None and key_column in sales_df.columns:
+            peers_df = sales_df[sales_df[key_column] == key_value]
+            id_column = "id" if "id" in peers_df.columns else "item_id" if "item_id" in peers_df.columns else None
+            if id_column is not None and not peers_df.empty:
+                skip_ids = {str(sku_id)}
+                item_id = info.get("item_id")
+                if item_id:
+                    skip_ids.add(str(item_id))
+
+                peer_ids = [
+                    pid
+                    for pid in peers_df[id_column].astype(str).unique().tolist()
+                    if pid not in skip_ids
+                ][:50]
+
+                mapes: list[float] = []
+                for peer_id in peer_ids:
+                    try:
+                        peer_result = _forecast_service.backtest(
+                            sku_id=peer_id,
+                            window=window,
+                            horizon=horizon,
+                            step=step,
+                            model_hint=model,
+                        )
+                    except Exception:  # pragma: no cover - defensive sampling of peers
+                        continue
+
+                    peer_mape = peer_result.get("mape")
+                    if peer_mape is not None and np.isfinite(peer_mape):
+                        mapes.append(float(peer_mape))
+
+                if mapes:
+                    result["cv"] = {
+                        "by": cv,
+                        "n": len(mapes),
+                        "mean_mape": float(np.round(float(np.mean(mapes)), 6)),
+                    }
+
     return result

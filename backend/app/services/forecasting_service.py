@@ -664,6 +664,7 @@ class ForecastingService:
         predicted_values: list[float] = []
         coverage_hits = 0
         coverage_total = 0
+        per_origin_coverage: list[float] = []
         model_used: str | None = None
 
         start_index = window
@@ -687,6 +688,9 @@ class ForecastingService:
             if model_used is None:
                 model_used = chosen_model
 
+            origin_hits = 0
+            origin_total = 0
+
             for dt, actual in future_slice.items():
                 prediction = float(mean_forecast.loc[dt])
                 lo = float(lower.loc[dt]) if dt in lower else 0.0
@@ -699,6 +703,11 @@ class ForecastingService:
                 coverage_total += 1
                 if lo <= actual <= hi:
                     coverage_hits += 1
+                    origin_hits += 1
+                origin_total += 1
+
+            if origin_total:
+                per_origin_coverage.append(float(origin_hits / origin_total))
 
             start_index += step
 
@@ -715,12 +724,17 @@ class ForecastingService:
 
         coverage = float(coverage_hits / coverage_total) if coverage_total else 0.0
 
+        history_tail = history.iloc[-window:]
+
         return {
             "dates": dates,
             "y": [float(v) for v in actual_values],
             "yhat": [float(v) for v in predicted_values],
             "mape": mape,
             "coverage": coverage,
+            "per_origin_coverage": [float(v) for v in per_origin_coverage],
+            "history_dates": [dt.date().isoformat() for dt in history_tail.index],
+            "history_values": [float(v) for v in history_tail.values],
             "model_used": model_used or preferred_model,
         }
 
