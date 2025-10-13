@@ -3,7 +3,6 @@
 # These values determine when procurement recommendations should be auto‑approved
 # versus flagged for human intervention.  Tune them to suit your business.
 
-auto_approval_limit: 1000    # Maximum spend (in your currency) that can be auto‑approved
-min_service_level: 0.90      # Minimum acceptable fill rate; below this triggers overrides
-gmroi_min: 1.10              # Minimum GMROI required for automatic approval
-max_cash_outlay: 10000       # Maximum available cash for inventory purchases per cycle
+auto_approval_limit: 1000.0  # If order spend (qty * unit_cost) <= this, auto-approve
+min_service_level: 0.90      # If forecast confidence below this, require approval
+gmroi_min: 0.05              # Minimum acceptable GMROI delta (dimensionless proxy)

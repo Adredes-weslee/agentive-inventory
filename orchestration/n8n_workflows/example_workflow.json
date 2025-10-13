@@ -1,15 +1,33 @@
 {
   "meta": {
     "name": "Daily SKU replenishment",
-    "notes": "Example n8n workflow for forecasting and procurement"
+    "notes": "Parametrized example n8n workflow"
   },
   "nodes": [
+    {
+      "id": "initSku",
+      "name": "Set sku_id",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 2,
+      "position": [200, 80],
+      "parameters": {
+        "keepOnlySet": true,
+        "values": {
+          "string": [
+            {
+              "name": "sku_id",
+              "value": "FOODS_3_090_CA_1_validation"
+            }
+          ]
+        }
+      }
+    },
     {
       "id": "scheduleTrigger",
       "name": "Daily Schedule",
       "type": "n8n-nodes-base.cron",
       "typeVersion": 1,
-      "position": [200, 150],
+      "position": [200, 200],
       "parameters": {
         "triggerTimes": {
           "item": [
@@ -27,9 +45,9 @@
       "name": "Get forecast",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 1,
-      "position": [400, 150],
+      "position": [480, 200],
       "parameters": {
-        "url": "http://backend:8000/api/v1/forecasts/HOBBIES_1_001",
+        "url": "={{$env.API_URL}}/forecasts/{{$json.sku_id}}",
         "method": "GET",
         "responseFormat": "json"
       }
@@ -39,15 +57,14 @@
       "name": "Get recommendation",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 1,
-      "position": [600, 150],
+      "position": [760, 200],
       "parameters": {
-        "url": "http://backend:8000/api/v1/procure/recommendations",
+        "url": "={{$env.API_URL}}/procure/recommendations",
         "method": "POST",
         "responseFormat": "json",
         "jsonParameters": true,
-        "options": {},
         "body": {
-          "sku_id": "HOBBIES_1_001",
+          "sku_id": "={{$json.sku_id}}",
           "horizon_days": 28
         }
       }
@@ -57,14 +74,25 @@
       "name": "Explain recommendation",
       "type": "n8n-nodes-base.function",
       "typeVersion": 1,
-      "position": [800, 150],
+      "position": [1040, 200],
       "parameters": {
-        "functionCode": "// In a real workflow this step would call the LLM service to explain\nreturn items;"
+        "functionCode": "// Optionally call an explanation endpoint here.\nreturn items;"
       }
     }
   ],
   "connections": {
     "scheduleTrigger": {
+      "main": [
+        [
+          {
+            "node": "initSku",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "initSku": {
       "main": [
         [
           {

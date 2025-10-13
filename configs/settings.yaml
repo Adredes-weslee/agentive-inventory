@@ -7,11 +7,14 @@
 
 environment: "development"
 default_service_level: 0.95  # desired probability of not stocking out
-service_level_target: 0.96   # explicit service level target used in procurement logic
-lead_time_days: 7           # typical supplier lead time in days
-carrying_cost_rate: 0.22    # holding cost as a fraction of unit cost per year
-order_cost: 75.0            # administrative + transport cost per order
-gross_margin_rate: 0.30     # expected gross margin percentage per SKU
+
+# Operational context (used by forecasting/procurement logic)
+service_level_target: 0.95     # Target cycle service level (0..1); sets z-score for safety stock
+lead_time_days: 14             # Default supplier lead time (days)
+carrying_cost_rate: 0.24       # Annual inventory carrying cost (as a fraction of unit cost)
+order_setup_cost: 50.0         # Cost to place/receive one order
+default_unit_cost: 10.0        # Fallback if price lookup fails
+gross_margin_rate: 0.30        # Expected gross margin percentage per SKU
 
 # External feeds: these can be used to incorporate knowledge of disruptions
 disruption_feeds:

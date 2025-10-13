@@ -3,22 +3,13 @@
 from __future__ import annotations
 
 import os
-import sys
-from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import pandas as pd
 import requests
 import streamlit as st
 
-ROOT = Path(__file__).resolve().parents[2]
-if str(ROOT) not in sys.path:
-    sys.path.append(str(ROOT))
-
-from backend.app.services.llm_service import explain_recommendation  # type: ignore  # noqa: E402
-
 API_URL = os.getenv("API_URL", "http://localhost:8000/api/v1")
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 
 def _fetch_recommendations(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -36,10 +27,7 @@ def _explain_recommendations(
     horizon_days: int,
     recommendations: List[Dict[str, Any]],
 ) -> Optional[str]:
-    """Return a rationale string using the backend or local LLM service."""
-
-    if not GEMINI_API_KEY:
-        return None
+    """Return a rationale string from the backend (if available), else a heuristic summary."""
 
     payload = {
         "sku_id": sku_id,
@@ -56,27 +44,62 @@ def _explain_recommendations(
         response.raise_for_status()
     except requests.Timeout:
         st.warning(
-            "The explanation service timed out. Showing a locally generated summary instead."
+            "The explanation service timed out. Showing a heuristic summary instead."
         )
     except requests.HTTPError as exc:
         if exc.response is not None and exc.response.status_code == 404:
-            # Endpoint not available; fall back to local helper.
-            pass
+            st.info("Explanation service unavailable; showing heuristic summary instead.")
         else:
             detail = exc.response.json().get("detail") if exc.response is not None else str(exc)
-            st.warning(f"Explanation service returned an error: {detail}. Using local summary instead.")
+            st.warning(
+                f"Explanation service returned an error: {detail}. Showing heuristic summary instead."
+            )
     except requests.RequestException as exc:  # pragma: no cover - network failure
-        st.warning(f"Unable to reach the explanation service: {exc}. Falling back to local summary.")
+        st.warning(
+            f"Unable to reach the explanation service: {exc}. Showing heuristic summary instead."
+        )
     else:
         data = response.json()
         explanation = data.get("explanation") or data.get("message")
         if isinstance(explanation, str) and explanation.strip():
             return explanation.strip()
 
+    # Heuristic fallback summary if backend explanation unavailable
     try:
-        return explain_recommendation({"sku_id": sku_id, "horizon_days": horizon_days}, recommendations)
-    except Exception as exc:  # pragma: no cover - defensive fallback
-        st.warning(f"Could not generate a local explanation: {exc}")
+        primary_rec = recommendations[0]
+        order_qty = primary_rec.get("order_qty")
+        reorder_point = primary_rec.get("reorder_point")
+        confidence = primary_rec.get("confidence")
+        requires_approval = primary_rec.get("requires_approval")
+
+        # Format components defensively in case of missing data
+        if order_qty is not None:
+            action_text = f"order {order_qty} units"
+        else:
+            action_text = "adjust order quantities"
+        rop_text = (
+            f"to stay above ROP={reorder_point}"
+            if reorder_point is not None
+            else "to maintain stock targets"
+        )
+        approval_text = (
+            "approval required"
+            if requires_approval
+            else "auto-approval"
+            if requires_approval is not None
+            else "approval status unknown"
+        )
+        confidence_text = (
+            f"confidence={confidence:.2f}"
+            if isinstance(confidence, (int, float))
+            else "confidence unavailable"
+        )
+
+        return (
+            "Heuristic rationale: "
+            f"Recommend to {action_text} {rop_text}; {approval_text}; {confidence_text}."
+        )
+    except Exception:
         return None
 
 

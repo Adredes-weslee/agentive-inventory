@@ -41,12 +41,6 @@ class InventoryService:
         self._load_settings()
 
     # ------------------------------------------------------------------
-    def get_unit_cost(self, sku_id: str) -> float:
-        """Return an estimated unit cost for ``sku_id``."""
-
-        return float(self.estimate_unit_cost(sku_id))
-
-    # ------------------------------------------------------------------
     def get_lead_time_days(self, sku_id: str) -> float:
         """Return the best-known replenishment lead time in days."""
 
@@ -116,9 +110,11 @@ class InventoryService:
             return False
 
         try:
-            return bool((self.sales_df["item_id"] == sku_id).any())
-        except KeyError:  # pragma: no cover - defensive logging only
-            LOGGER.warning("Sales dataset missing 'item_id' column; cannot confirm SKU %s", sku_id)
+            has_row_id = "id" in self.sales_df.columns and (self.sales_df["id"] == sku_id).any()
+            has_item = "item_id" in self.sales_df.columns and (self.sales_df["item_id"] == sku_id).any()
+            return bool(has_row_id or has_item)
+        except Exception:  # pragma: no cover - defensive logging only
+            LOGGER.warning("Unable to evaluate SKU existence for %s", sku_id)
             return False
 
     # ------------------------------------------------------------------
@@ -129,11 +125,17 @@ class InventoryService:
     def get_sku_info(self, sku_id: str) -> Dict[str, Any]:
         if self.sales_df is None:
             return {}
-        row = self.sales_df[self.sales_df["item_id"] == sku_id]
+        df = self.sales_df
+        row = pd.DataFrame()
+        if "id" in df.columns:
+            row = df[df["id"] == sku_id]
+        if row.empty and "item_id" in df.columns:
+            row = df[df["item_id"] == sku_id]
         if row.empty:
             return {}
         rec = row.iloc[0]
         return {
+            "item_id": rec.get("item_id"),
             "dept_id": rec.get("dept_id"),
             "cat_id": rec.get("cat_id"),
             "store_id": rec.get("store_id"),

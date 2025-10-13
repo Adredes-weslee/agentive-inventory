@@ -8,10 +8,15 @@ services:
     envVars:
       - key: GEMINI_API_KEY
         sync: false
-      - key: API_HOST
-        value: 0.0.0.0
-      - key: API_PORT
-        value: "8000"
+      - key: DATA_DIR
+        value: /data
+      - key: CONFIG_DIR
+        value: /app/configs
+    # disk:
+    #   name: agentive-data
+    #   mountPath: /data
+    #   sizeGB: 1
+
   - type: web
     name: agentive-ui
     env: python
@@ -21,3 +26,4 @@ services:
     envVars:
       - key: API_URL
         value: https://agentive-api.onrender.com/api/v1
+
