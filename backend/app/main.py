@@ -13,7 +13,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
 
-from .api.v1 import approvals, catalog, configs, forecasts, health, procure
+from .api.v1 import approvals, backtest, catalog, configs, forecasts, health, procure
 
 app = FastAPI(title="Agentive Inventory API", version="0.1.0")
 
@@ -34,6 +34,7 @@ app.include_router(procure.router, prefix="/api/v1")
 app.include_router(catalog.router, prefix="/api/v1")
 app.include_router(configs.router, prefix="/api/v1")
 app.include_router(approvals.router, prefix="/api/v1")
+app.include_router(backtest.router, prefix="/api/v1")
 
 
 @app.get("/", include_in_schema=False)

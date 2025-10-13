@@ -14,8 +14,18 @@ from pydantic import BaseModel, Field
 router = APIRouter()
 
 CONFIG_DIR = os.getenv("CONFIG_DIR", "configs")
-SETTINGS_PATH = os.path.join(CONFIG_DIR, "settings.yaml")
-THRESHOLDS_PATH = os.path.join(CONFIG_DIR, "thresholds.yaml")
+
+
+def _settings_path() -> str:
+    """Return the current settings.yaml path based on ``CONFIG_DIR``."""
+
+    return os.path.join(CONFIG_DIR, "settings.yaml")
+
+
+def _thresholds_path() -> str:
+    """Return the current thresholds.yaml path based on ``CONFIG_DIR``."""
+
+    return os.path.join(CONFIG_DIR, "thresholds.yaml")
 
 
 def _load_yaml(path: str) -> Dict[str, Any]:
@@ -62,7 +72,7 @@ def _merge_updates(original: Dict[str, Any], updates: Dict[str, Any]) -> Dict[st
 @router.get("/configs/settings")
 def get_settings() -> Dict[str, Any]:
     try:
-        return _load_yaml(SETTINGS_PATH)
+        return _load_yaml(_settings_path())
     except FileNotFoundError as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -76,7 +86,7 @@ def get_settings() -> Dict[str, Any]:
 @router.put("/configs/settings")
 def put_settings(body: SettingsUpdate) -> Dict[str, Any]:
     try:
-        current = _load_yaml(SETTINGS_PATH)
+        current = _load_yaml(_settings_path())
     except FileNotFoundError:
         current = {}
 
@@ -85,7 +95,7 @@ def put_settings(body: SettingsUpdate) -> Dict[str, Any]:
         return current
 
     try:
-        _safe_write_yaml(SETTINGS_PATH, updated)
+        _safe_write_yaml(_settings_path(), updated)
     except OSError as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -97,7 +107,7 @@ def put_settings(body: SettingsUpdate) -> Dict[str, Any]:
 @router.get("/configs/thresholds")
 def get_thresholds() -> Dict[str, Any]:
     try:
-        return _load_yaml(THRESHOLDS_PATH)
+        return _load_yaml(_thresholds_path())
     except FileNotFoundError as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -111,7 +121,7 @@ def get_thresholds() -> Dict[str, Any]:
 @router.put("/configs/thresholds")
 def put_thresholds(body: ThresholdsUpdate) -> Dict[str, Any]:
     try:
-        current = _load_yaml(THRESHOLDS_PATH)
+        current = _load_yaml(_thresholds_path())
     except FileNotFoundError:
         current = {}
 
@@ -120,7 +130,7 @@ def put_thresholds(body: ThresholdsUpdate) -> Dict[str, Any]:
         return current
 
     try:
-        _safe_write_yaml(THRESHOLDS_PATH, updated)
+        _safe_write_yaml(_thresholds_path(), updated)
     except OSError as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
