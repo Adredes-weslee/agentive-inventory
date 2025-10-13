@@ -12,10 +12,10 @@ services:
         value: /data
       - key: CONFIG_DIR
         value: /app/configs
-    # disk:
-    #   name: agentive-data
-    #   mountPath: /data
-    #   sizeGB: 1
+    disk:
+      name: agentive-data
+      mountPath: /data
+      sizeGB: 2
 
   - type: web
     name: agentive-ui
