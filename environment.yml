@@ -1,23 +1,24 @@
-name: agentive-inventory-test
+name: agentive-inventory
 channels:
   - conda-forge
   - defaults
 dependencies:
-  - python=3.10
+  - python=3.11
+  - pip
   - fastapi
+  - uvicorn
   - pydantic
   - pandas
   - numpy
-  - prophet
-  - xgboost
   - scikit-learn
-  - sqlmodel
-  - pyyaml
+  - xgboost
   - requests
   - streamlit
   - altair
-  - pip
+  - pyyaml
+  - pytest
+  - mypy
+  - ruff
   - pip:
-      - uvicorn[standard]
-      - google-generativeai
-      - pytest
+      - google-genai>=0.3
+      - prophet>=1.1.5
