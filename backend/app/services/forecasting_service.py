@@ -15,9 +15,11 @@ import os
 from dataclasses import dataclass
 from datetime import date
 from math import sqrt
+from pathlib import Path
 from statistics import NormalDist
 from typing import Iterable, List, Sequence
 
+import joblib
 import numpy as np
 import pandas as pd
 
@@ -195,6 +197,18 @@ class ForecastingService:
         self.model_portfolio: dict[str, str] = {"A": "xgb", "B": "prophet", "C": "sma"}
         self._abc_cache: dict[str, str] = {}
         self._abc_thresholds: tuple[float, float] | None = None
+
+        data_root_path = Path(os.getenv("DATA_DIR", self.data_root))
+        models_dir_env = os.getenv("MODELS_DIR")
+        self.models_dir: Path = (
+            Path(models_dir_env)
+            if models_dir_env
+            else data_root_path / "models"
+        )
+        self._model_cache: dict[str, object] = {}
+        self._model_artifacts: dict[str, Path] = {}
+
+        self._warm_model_cache()
 
         self._load_configuration()
         self._load_data()
@@ -397,6 +411,7 @@ class ForecastingService:
         series = self._resolve_sku(sku_id)
         dates = self._map_days_to_dates(series.index)
         history = pd.Series(series.values, index=pd.DatetimeIndex(dates, name="date"))
+        history.name = series.name
 
         model_class = self._preferred_model_for_sku(sku_id, series)
 
@@ -414,6 +429,38 @@ class ForecastingService:
             return [self.calendar_map[d] for d in days]
         except KeyError as exc:  # pragma: no cover - defensive branch
             raise ValueError(f"Calendar is missing entries for day '{exc.args[0]}'") from exc
+
+    # ------------------------------------------------------------------
+    def _warm_model_cache(self) -> None:
+        """Ensure the model cache directory exists and record known artifacts."""
+
+        try:
+            self.models_dir.mkdir(parents=True, exist_ok=True)
+        except OSError:  # pragma: no cover - filesystem failure
+            LOGGER.exception("Unable to create model cache directory at %s", self.models_dir)
+            return
+
+        self._model_cache.clear()
+        self._model_artifacts.clear()
+
+        try:
+            for artifact in self.models_dir.glob("*.joblib"):
+                self._model_artifacts[artifact.stem] = artifact
+        except OSError:  # pragma: no cover - filesystem failure
+            LOGGER.exception("Unable to enumerate cached models in %s", self.models_dir)
+
+    # ------------------------------------------------------------------
+    def _model_cache_key(self, model_type: str, history: pd.Series) -> str:
+        sku = (history.name or "series").replace(os.sep, "_")
+        return f"{model_type}__{sku}"
+
+    # ------------------------------------------------------------------
+    def _model_artifact_path(self, cache_key: str) -> Path:
+        path = self._model_artifacts.get(cache_key)
+        if path is None:
+            path = self.models_dir / f"{cache_key}.joblib"
+            self._model_artifacts[cache_key] = path
+        return path
 
     # ------------------------------------------------------------------
     def _future_dates(self, last_day: str, horizon_days: int) -> List[date]:
@@ -482,18 +529,41 @@ class ForecastingService:
         features = self._add_calendar_features(supervised.index, features)
         target = supervised["y"].astype(float)
 
-        model = XGBRegressor(
-            n_estimators=400,
-            learning_rate=0.05,
-            max_depth=6,
-            subsample=0.9,
-            colsample_bytree=0.9,
-            objective="reg:squarederror",
-            reg_alpha=0.1,
-            reg_lambda=1.0,
-            verbosity=0,
-        )
-        model.fit(features, target)
+        cache_key = self._model_cache_key("xgb", history)
+        model_path = self._model_artifact_path(cache_key)
+        cached = self._model_cache.get(cache_key)
+        model: XGBRegressor | None = cached if isinstance(cached, XGBRegressor) else None
+        trained = False
+
+        if model is None and model_path.exists():
+            try:
+                loaded = joblib.load(model_path)
+                model = loaded if isinstance(loaded, XGBRegressor) else None
+            except Exception:  # pragma: no cover - defensive path
+                LOGGER.exception("Failed to load cached XGBoost model at %s", model_path)
+                model = None
+
+        if model is None:
+            model = XGBRegressor(
+                n_estimators=400,
+                learning_rate=0.05,
+                max_depth=6,
+                subsample=0.9,
+                colsample_bytree=0.9,
+                objective="reg:squarederror",
+                reg_alpha=0.1,
+                reg_lambda=1.0,
+                verbosity=0,
+            )
+            model.fit(features, target)
+            trained = True
+
+        self._model_cache[cache_key] = model
+        if trained or not model_path.exists():
+            try:
+                joblib.dump(model, model_path)
+            except Exception:  # pragma: no cover - defensive path
+                LOGGER.exception("Failed to persist XGBoost model at %s", model_path)
 
         in_sample_pred = pd.Series(model.predict(features), index=features.index)
         residuals = target - in_sample_pred
@@ -518,9 +588,38 @@ class ForecastingService:
         self, history: pd.Series, future_index: pd.DatetimeIndex
     ) -> tuple[pd.Series, pd.Series, pd.Series, pd.Series, pd.Series]:
         assert HAS_PROPHET and Prophet is not None
-        df = pd.DataFrame({"ds": history.index, "y": history.values})
-        model = Prophet(daily_seasonality=True, weekly_seasonality=True, yearly_seasonality=True)
-        model.fit(df)
+
+        cache_key = self._model_cache_key("prophet", history)
+        model_path = self._model_artifact_path(cache_key)
+        cached = self._model_cache.get(cache_key)
+        model: Prophet | None = cached if isinstance(cached, Prophet) else None
+        trained = False
+
+        if model is None and model_path.exists():
+            try:
+                loaded = joblib.load(model_path)
+                model = loaded if isinstance(loaded, Prophet) else None
+            except Exception:  # pragma: no cover - defensive path
+                LOGGER.exception("Failed to load cached Prophet model at %s", model_path)
+                model = None
+
+        if model is None:
+            df = pd.DataFrame({"ds": history.index, "y": history.values})
+            model = Prophet(
+                daily_seasonality=True,
+                weekly_seasonality=True,
+                yearly_seasonality=True,
+            )
+            model.fit(df)
+            trained = True
+
+        self._model_cache[cache_key] = model
+        if trained or not model_path.exists():
+            try:
+                joblib.dump(model, model_path)
+            except Exception:  # pragma: no cover - defensive path
+                LOGGER.exception("Failed to persist Prophet model at %s", model_path)
+
         horizon_days = len(future_index)
         future = model.make_future_dataframe(periods=horizon_days, freq="D")
         forecast_df = model.predict(future)
