@@ -14,6 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
 
 from .api.v1 import approvals, backtest, catalog, configs, forecasts, health, procure
+from .core.observability import TokenAndRateLimitMiddleware, metrics_endpoint
 
 app = FastAPI(title="Agentive Inventory API", version="0.1.0")
 
@@ -26,6 +27,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.add_middleware(TokenAndRateLimitMiddleware)
 
 # Include versioned routers
 app.include_router(health.router, prefix="/api/v1")
@@ -42,3 +44,10 @@ def _root() -> RedirectResponse:
     """Redirect the root path to the interactive docs."""
 
     return RedirectResponse(url="/docs")
+
+
+@app.get("/metrics", include_in_schema=False)
+async def _metrics():
+    """Expose Prometheus metrics."""
+
+    return metrics_endpoint()
