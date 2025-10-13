@@ -33,9 +33,38 @@ if sku:
             data = resp.json()
         df = pd.DataFrame(data["forecast"])
         df["date"] = pd.to_datetime(df["date"])
-        # Show basic statistics
-        avg_demand = df["mean"].mean()
-        st.metric("Average forecast demand", f"{avg_demand:.2f} units/day")
+        # Show KPI cards
+        avg_demand = float(df["mean"].mean()) if not df.empty else 0.0
+
+        try:
+            settings = requests.get(f"{API_URL}/configs/settings", timeout=10).json()
+        except Exception:
+            settings = {}
+
+        service_level = settings.get("service_level_target", 0.95)
+        if isinstance(service_level, str):
+            try:
+                service_level = float(service_level)
+            except ValueError:
+                service_level = 0.95
+        elif not isinstance(service_level, (int, float)):
+            service_level = 0.95
+
+        lead_time_days = settings.get("lead_time_days", 14)
+        if isinstance(lead_time_days, str):
+            try:
+                lead_time_days = float(lead_time_days)
+            except ValueError:
+                lead_time_days = 14
+        if isinstance(lead_time_days, float):
+            lead_time_days = int(round(lead_time_days))
+        elif not isinstance(lead_time_days, int):
+            lead_time_days = 14
+
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Average forecast", f"{avg_demand:.2f}/day")
+        c2.metric("Service level target", f"{service_level:.3f}")
+        c3.metric("Lead time (days)", f"{lead_time_days}")
         # Plot mean + PI band
         base = alt.Chart(df).encode(x="date:T")
         band = base.mark_area(opacity=0.2).encode(y="lo:Q", y2="hi:Q")
