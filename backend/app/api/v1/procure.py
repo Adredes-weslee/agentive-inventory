@@ -3,14 +3,17 @@
 from __future__ import annotations
 
 import logging
-from typing import Iterable, List
+import os
+from typing import Dict, Iterable, List
 
+import yaml
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, Field
 
 from ...models import schemas
 from ...services.forecasting_service import ForecastingService
 from ...services.inventory_service import InventoryService
+from ...services.llm_service import explain_recommendation
 from ...services.procurement_service import ProcurementService
 
 LOGGER = logging.getLogger(__name__)
@@ -24,6 +27,21 @@ DEFAULT_HORIZON_DAYS = 28
 _forecast_service = ForecastingService(data_root="data")
 _procurement_service = ProcurementService()
 _inventory_service = InventoryService(data_root="data")
+
+
+def _load_yaml_config(filename: str) -> Dict[str, object]:
+    path = os.path.join("configs", filename)
+    if not os.path.exists(path):
+        return {}
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            data = yaml.safe_load(handle) or {}
+    except Exception:  # pragma: no cover - defensive path
+        LOGGER.exception("Failed to read configuration file at %s", path)
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    return dict(data)
 
 
 def _error_payload(code: str, message: str) -> dict[str, str]:
@@ -99,6 +117,14 @@ class ProcurementRequest(BaseModel):
     )
 
 
+class ExplainRequest(BaseModel):
+    """Payload for LLM-backed explanation requests."""
+
+    sku_id: str = Field(..., min_length=1)
+    horizon_days: int = Field(..., ge=1)
+    recommendations: List[Dict[str, object]] = Field(default_factory=list)
+
+
 @router.post("/procure/recommendations", response_model=List[schemas.ReorderRec])
 async def get_recommendations(body: ProcurementRequest) -> List[schemas.ReorderRec]:
     """Generate purchase recommendations for a SKU using forecasted demand."""
@@ -160,3 +186,20 @@ async def get_recommendations(body: ProcurementRequest) -> List[schemas.ReorderR
         ) from exc
 
     return _map_recommendations(recommendations)
+
+
+@router.post("/procure/recommendations/explain")
+async def explain_recommendations(body: ExplainRequest) -> Dict[str, str]:
+    """Return a natural language explanation for the provided recommendations."""
+
+    if not os.getenv("GEMINI_API_KEY"):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="LLM integration disabled")
+
+    context = {
+        "sku_id": body.sku_id,
+        "horizon_days": body.horizon_days,
+        "settings": _load_yaml_config("settings.yaml"),
+        "thresholds": _load_yaml_config("thresholds.yaml"),
+    }
+    explanation = explain_recommendation(context, body.recommendations)
+    return {"explanation": explanation}
