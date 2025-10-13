@@ -143,3 +143,87 @@ if submitted:
             if explanation:
                 st.markdown("### Rationale")
                 st.write(explanation)
+
+            approval_state_key = f"approval_state::{body['sku_id']}"
+            approval_state = st.session_state.setdefault(approval_state_key, {"completed_action": None})
+            interaction_disabled = approval_state.get("completed_action") is not None
+
+            st.markdown("### Approve or reject recommendation")
+            with st.expander("Approval workflow", expanded=requires_approval and not interaction_disabled):
+                recommended_qty = None
+                if not df.empty and "order_qty" in df.columns:
+                    try:
+                        raw_qty = df.iloc[0]["order_qty"]
+                        recommended_qty = int(raw_qty)
+                    except (TypeError, ValueError):
+                        try:
+                            recommended_qty = int(float(raw_qty))
+                        except (TypeError, ValueError):
+                            recommended_qty = None
+
+                override_default = recommended_qty is None
+                include_override = st.checkbox(
+                    "Provide quantity override",
+                    value=override_default,
+                    disabled=interaction_disabled,
+                    key=f"approval_qty_override::{body['sku_id']}"
+                )
+
+                qty_value = recommended_qty
+                if include_override:
+                    qty_value = st.number_input(
+                        "Quantity (optional override)",
+                        min_value=0,
+                        value=recommended_qty if recommended_qty is not None else 0,
+                        step=1,
+                        disabled=interaction_disabled,
+                        key=f"approval_qty_input::{body['sku_id']}"
+                    )
+
+                reason_value = st.text_input(
+                    "Reason / note",
+                    value="",
+                    disabled=interaction_disabled,
+                    key=f"approval_reason::{body['sku_id']}"
+                )
+
+                payload_base = {"sku_id": body["sku_id"]}
+                if qty_value is not None:
+                    payload_base["qty"] = int(qty_value)
+                if reason_value.strip():
+                    payload_base["reason"] = reason_value.strip()
+
+                col_approve, col_reject = st.columns(2)
+
+                def _submit_decision(action: str) -> None:
+                    submission = {**payload_base, "action": action}
+                    try:
+                        response = requests.post(
+                            f"{API_URL}/approvals",
+                            json=submission,
+                            timeout=20,
+                        )
+                        response.raise_for_status()
+                    except requests.RequestException as exc:
+                        st.error(f"Failed to submit {action} decision: {exc}")
+                    else:
+                        approval_state["completed_action"] = action
+                        st.session_state[approval_state_key] = approval_state
+                        icon = "✅" if action == "approve" else "❌"
+                        st.toast(f"{icon} {action.title()}d recommendation for {body['sku_id']}", icon=icon)
+
+                approve_pressed = col_approve.button(
+                    "✅ Approve",
+                    disabled=interaction_disabled,
+                    key=f"approval_approve::{body['sku_id']}"
+                )
+                if approve_pressed and not interaction_disabled:
+                    _submit_decision("approve")
+
+                reject_pressed = col_reject.button(
+                    "❌ Reject",
+                    disabled=interaction_disabled,
+                    key=f"approval_reject::{body['sku_id']}"
+                )
+                if reject_pressed and not interaction_disabled:
+                    _submit_decision("reject")
