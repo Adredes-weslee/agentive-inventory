@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import os
 from dataclasses import dataclass
 from functools import lru_cache
@@ -278,3 +279,29 @@ class InventoryService:
         """Backward compatible wrapper for legacy callers."""
 
         return self.get_unit_cost(sku_id)
+
+    # ------------------------------------------------------------------
+    def get_unit_price(self, sku_id: str) -> Optional[float]:
+        """Return the median historical sell price for the SKU's item."""
+
+        if self.prices_df is None or self.prices_df.empty:
+            return None
+
+        sku_info = self.get_sku_info(sku_id)
+        item_id = sku_info.get("item_id") if sku_info else sku_id
+        if item_id is None:
+            item_id = sku_id
+
+        try:
+            price_series = self.prices_df.loc[self.prices_df["item_id"] == item_id, "sell_price"]
+        except KeyError:  # pragma: no cover - defensive branch
+            return None
+
+        if price_series.empty:
+            return None
+
+        median_price = float(price_series.median())
+        if not math.isfinite(median_price) or median_price <= 0:
+            return None
+
+        return median_price
