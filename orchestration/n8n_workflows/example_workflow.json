@@ -78,6 +78,53 @@
       "parameters": {
         "functionCode": "// Optionally call an explanation endpoint here.\nreturn items;"
       }
+    },
+    {
+      "id": "slackNotify",
+      "name": "Notify approver",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 1,
+      "position": [1240, 200],
+      "parameters": {
+        "resource": "message",
+        "operation": "post",
+        "authentication": "accessToken",
+        "channel": "#approvals",
+        "text": "Recommendation for {{$json.sku_id}}: order {{$json.order_qty}}.\nApprove: {{$env.WEB_BASE}}/approval?decision=approve&sku={{$json.sku_id}}&qty={{$json.order_qty}}\nReject: {{$env.WEB_BASE}}/approval?decision=reject&sku={{$json.sku_id}}&qty={{$json.order_qty}}"
+      }
+    },
+    {
+      "id": "webhookDecision",
+      "name": "Approval webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [1440, 80],
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "approval",
+        "responseMode": "onReceived",
+        "responseData": "text",
+        "responseBody": "Received"
+      }
+    },
+    {
+      "id": "postApproval",
+      "name": "Post approval",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [1640, 80],
+      "parameters": {
+        "url": "={{$env.API_URL}}/approvals",
+        "method": "POST",
+        "jsonParameters": true,
+        "responseFormat": "json",
+        "options": {},
+        "body": {
+          "sku_id": "={{$json.query.sku}}",
+          "action": "={{$json.query.decision}}",
+          "qty": "={{$json.query.qty}}"
+        }
+      }
     }
   ],
   "connections": {
@@ -119,6 +166,22 @@
         [
           {
             "node": "httpExplain",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "slackNotify",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "webhookDecision": {
+      "main": [
+        [
+          {
+            "node": "postApproval",
             "type": "main",
             "index": 0
           }

@@ -16,6 +16,10 @@ This folder contains example orchestration workflows for connecting the backend 
 2. Forecast → `GET /forecasts/{sku_id}`
 3. Procure → `POST /procure/recommendations`
 4. Explain (optional)
-5. Notify approver
-6. Await approval
+5. Notify approver (Slack template)
+6. Approval webhook (`/approval`) → posts to `/approvals`
 7. Store audit record
+
+**Notes**
+- Set `WEB_BASE` env in n8n to the public base URL of your n8n instance so Slack links work.
+- Configure Slack credentials on the Slack node or swap it for Email.
