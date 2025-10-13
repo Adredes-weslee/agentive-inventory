@@ -1,26 +1,32 @@
 name: ci
-
 on:
   push:
-    branches: [ main ]
   pull_request:
-    branches: [ main ]
 
 jobs:
-  test:
+  build-test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - name: Install dependencies
+          cache: 'pip'
+      - name: Install deps
         run: |
-          pip install --upgrade pip
-          pip install -r backend/requirements.txt -r frontend/requirements.txt ruff mypy pytest
-      - name: Lint
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements.txt
+          pip install -r frontend/requirements.txt
+          pip install pytest pytest-cov mypy ruff
+      - name: Ruff
         run: ruff check .
-      - name: Type check backend
-        run: mypy backend/app
-      - name: Run tests
-        run: pytest backend
+      - name: Mypy (backend)
+        run: mypy backend
+      - name: Pytest
+        run: pytest -q --maxfail=1 --disable-warnings --cov=backend --cov-report=term-missing --junitxml=pytest-report.xml
+      - name: Upload JUnit
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: junit-report
+          path: pytest-report.xml
