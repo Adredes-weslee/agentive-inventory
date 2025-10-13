@@ -186,7 +186,8 @@ Two services in **Render**:
 * **agentive-api** (rootDir=`backend`)
   Build: `pip install -r requirements.txt`
   Start: `uvicorn app.main:app --host 0.0.0.0 --port $PORT`
-  Env: `GEMINI_API_KEY` (optional), `DATA_DIR=/data` if using persistent disk.
+  Env: `GEMINI_API_KEY` (optional), `DATA_DIR=/data` (keep this pointing to the Render disk mount).
+  Disk: attach a persistent disk (e.g., 2 GB) named `agentive-data` mounted at `/data` for saved files.
 * **agentive-ui** (rootDir=`frontend`)
   Build: `pip install -r requirements.txt`
   Start: `streamlit run app.py --server.port $PORT --server.address 0.0.0.0`
