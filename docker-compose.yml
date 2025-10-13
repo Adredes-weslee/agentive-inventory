@@ -1,0 +1,59 @@
+version: "3.8"
+
+services:
+  backend:
+    build:
+      context: ./backend
+    container_name: agentive-backend
+    environment:
+      - API_HOST=0.0.0.0
+      - API_PORT=8000
+      - DATA_DIR=/app/data
+      - CONFIG_DIR=/app/configs
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+    volumes:
+      - ./data:/app/data:ro
+      - ./configs:/app/configs:ro
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+    command: >
+      uvicorn app.main:app --host 0.0.0.0 --port 8000
+    networks: [appnet]
+
+  frontend:
+    build:
+      context: ./frontend
+    container_name: agentive-frontend
+    environment:
+      - API_URL=http://backend:8000/api/v1
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "8501:8501"
+    command: >
+      streamlit run app.py --server.port 8501 --server.address 0.0.0.0
+    networks: [appnet]
+
+  n8n:
+    image: n8nio/n8n:latest
+    container_name: agentive-n8n
+    environment:
+      - N8N_HOST=localhost
+      - N8N_PORT=5678
+      - TZ=UTC
+      - API_URL=http://backend:8000/api/v1
+    ports:
+      - "5678:5678"
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks: [appnet]
+
+networks:
+  appnet: {}
