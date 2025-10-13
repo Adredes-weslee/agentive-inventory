@@ -64,6 +64,17 @@ if submitted:
                         "yhat": yhat,
                     })
 
+                    history_dates = payload.get("history_dates") or []
+                    history_values = payload.get("history_values") or []
+                    history_df = None
+                    if history_dates and history_values:
+                        history_df = pd.DataFrame(
+                            {
+                                "date": pd.to_datetime(history_dates),
+                                "history": history_values,
+                            }
+                        )
+
                     cols = st.columns(3)
                     with cols[0]:
                         mape = payload.get("mape")
@@ -83,11 +94,60 @@ if submitted:
                     st.caption(f"Model used: {payload.get('model_used', 'n/a')}")
 
                     base = alt.Chart(df).encode(x="date:T")
-                    forecast_chart = (
-                        base.mark_line(color="#1f77b4").encode(y="y:Q", tooltip=["date", "y"])
-                        + base.mark_line(color="#ff7f0e").encode(y="yhat:Q", tooltip=["date", "yhat"])
-                    ).interactive()
-                    st.altair_chart(forecast_chart, use_container_width=True)
+                    layers = [
+                        base.mark_line(color="#1f77b4").encode(y="y:Q", tooltip=["date", "y"]),
+                        base.mark_line(color="#ff7f0e").encode(
+                            y="yhat:Q", tooltip=["date", "yhat"]
+                        ),
+                    ]
+
+                    if history_df is not None:
+                        history_chart = (
+                            alt.Chart(history_df)
+                            .mark_line(color="#2ca02c", strokeDash=[4, 2], opacity=0.6)
+                            .encode(x="date:T", y="history:Q", tooltip=["date", "history"])
+                        )
+                        layers.append(history_chart)
+
+                    forecast_chart = alt.layer(*layers).interactive()
+                    st.altair_chart(
+                        forecast_chart.properties(title="Forecast vs. actuals with history overlay"),
+                        use_container_width=True,
+                    )
+
+                    per_origin = payload.get("per_origin_coverage") or []
+                    if per_origin:
+                        st.write("### Per-origin coverage")
+                        coverage_df = pd.DataFrame(
+                            {
+                                "Origin": list(range(1, len(per_origin) + 1)),
+                                "Coverage": [float(value) for value in per_origin],
+                            }
+                        )
+                        coverage_df["Trend"] = [
+                            coverage_df.loc[: index, "Coverage"].tolist()
+                            for index in coverage_df.index
+                        ]
+
+                        st.dataframe(
+                            coverage_df,
+                            use_container_width=True,
+                            column_config={
+                                "Origin": st.column_config.NumberColumn("Origin", format="%d"),
+                                "Coverage": st.column_config.ProgressColumn(
+                                    "Coverage",
+                                    format="{:.0%}",
+                                    min_value=0.0,
+                                    max_value=1.0,
+                                ),
+                                "Trend": st.column_config.LineChartColumn(
+                                    "Trend",
+                                    y_min=0.0,
+                                    y_max=1.0,
+                                ),
+                            },
+                            hide_index=True,
+                        )
 
                     csv_data = df.to_csv(index=False).encode("utf-8")
                     st.download_button(

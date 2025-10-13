@@ -256,11 +256,11 @@ with tab_single:
 with tab_batch:
     st.subheader("Batch recommendations")
     st.caption(
-        "Enter one M5 row id per line or select from the catalog list. Recommendations will"
-        " be prioritised by GMROI delta when applying a budget."
+        "Start typing to select SKUs from the catalog (up to 1,000) or paste a list manually. "
+        "Recommendations will be prioritised by GMROI delta when applying a budget."
     )
 
-    catalog_options = _get_catalog_ids(limit=100)
+    catalog_options = _get_catalog_ids(limit=1000)
     selected_catalog_ids: List[str] = []
 
     with st.form(key="batch_form"):
@@ -268,6 +268,7 @@ with tab_batch:
             selected_catalog_ids = st.multiselect(
                 "Choose SKUs from catalog (optional)",
                 options=catalog_options,
+                placeholder="Search SKUs…",
                 help="Select one or more IDs fetched from the catalog service.",
             )
         else:
