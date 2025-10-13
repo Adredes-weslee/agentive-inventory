@@ -29,6 +29,21 @@ _procurement_service = ProcurementService()
 _inventory_service = InventoryService(data_root="data")
 
 
+def _load_yaml_config(filename: str) -> Dict[str, object]:
+    path = os.path.join("configs", filename)
+    if not os.path.exists(path):
+        return {}
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            data = yaml.safe_load(handle) or {}
+    except Exception:  # pragma: no cover - defensive path
+        LOGGER.exception("Failed to read configuration file at %s", path)
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    return dict(data)
+
+
 def _error_payload(code: str, message: str) -> dict[str, str]:
     """Return a standardised error payload."""
 
