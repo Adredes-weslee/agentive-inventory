@@ -11,6 +11,7 @@ import requests
 import yaml
 import streamlit as st
 
+from ..utils.api import get_headers
 SETTINGS_PATH = os.path.join(os.path.dirname(__file__), "..", "..", "configs", "settings.yaml")
 THRESHOLDS_PATH = os.path.join(os.path.dirname(__file__), "..", "..", "configs", "thresholds.yaml")
 API_URL = os.getenv("API_URL", "http://localhost:8000/api/v1")
@@ -140,6 +141,7 @@ with st.form("edit_settings"):
             r1 = requests.put(
                 f"{API_URL}/configs/settings",
                 json=settings_payload,
+                headers=get_headers(),
                 timeout=20,
             )
             thresholds_payload = {
@@ -150,6 +152,7 @@ with st.form("edit_settings"):
             r2 = requests.put(
                 f"{API_URL}/configs/thresholds",
                 json=thresholds_payload,
+                headers=get_headers(),
                 timeout=20,
             )
             if r1.ok and r2.ok:

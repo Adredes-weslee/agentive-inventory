@@ -9,6 +9,8 @@ import pandas as pd
 import requests
 import streamlit as st
 
+from ..utils.api import get_headers
+
 API_URL = os.getenv("API_URL", "http://localhost:8000/api/v1")
 
 
@@ -16,6 +18,7 @@ def _fetch_recommendations(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
     response = requests.post(
         f"{API_URL}/procure/recommendations",
         json=payload,
+        headers=get_headers(),
         timeout=30,
     )
     response.raise_for_status()
@@ -39,6 +42,7 @@ def _explain_recommendations(
         response = requests.post(
             f"{API_URL}/procure/recommendations/explain",
             json=payload,
+            headers=get_headers(),
             timeout=60,
         )
         response.raise_for_status()
@@ -111,6 +115,7 @@ def _get_catalog_ids(limit: int = 50) -> List[str]:
         response = requests.get(
             f"{API_URL}/catalog/ids",
             params={"limit": limit},
+            headers=get_headers(),
             timeout=15,
         )
         response.raise_for_status()
@@ -222,6 +227,7 @@ with tab_single:
                             response = requests.post(
                                 f"{API_URL}/approvals",
                                 json=submission,
+                                headers=get_headers(),
                                 timeout=20,
                             )
                             response.raise_for_status()
@@ -324,6 +330,7 @@ with tab_batch:
                     response = requests.post(
                         f"{API_URL}/procure/batch_recommendations",
                         json=payload,
+                        headers=get_headers(),
                         timeout=60,
                     )
                     response.raise_for_status()
