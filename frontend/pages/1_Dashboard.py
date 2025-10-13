@@ -36,13 +36,19 @@ if sku:
         # Show basic statistics
         avg_demand = df["mean"].mean()
         st.metric("Average forecast demand", f"{avg_demand:.2f} units/day")
-        # Plot the forecast
-        chart = (
-            alt.Chart(df)
-            .mark_line()
-            .encode(x="date:T", y="mean:Q")
-            .properties(width=700, height=300, title=f"Forecast for {sku}")
+        # Plot mean + PI band
+        base = alt.Chart(df).encode(x="date:T")
+        band = base.mark_area(opacity=0.2).encode(y="lo:Q", y2="hi:Q")
+        line = base.mark_line().encode(y="mean:Q")
+        st.altair_chart(
+            (band + line).properties(width=700, height=300, title=f"Forecast for {sku}"),
+            use_container_width=True,
         )
-        st.altair_chart(chart, use_container_width=True)
+        st.download_button(
+            "Download CSV",
+            df.to_csv(index=False).encode("utf-8"),
+            file_name=f"dashboard_forecast_{sku}.csv",
+            mime="text/csv",
+        )
     except Exception as e:
         st.error(f"Failed to retrieve forecast: {e}")

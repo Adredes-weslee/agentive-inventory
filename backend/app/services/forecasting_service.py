@@ -199,7 +199,12 @@ class ForecastingService:
     def _load_configuration(self) -> None:
         settings_path = os.path.join(self.config_root, "settings.yaml")
         settings = load_yaml(settings_path)
-        service_level = float(settings.get("default_service_level", self.service_level))
+        service_level = float(
+            settings.get(
+                "service_level_target",
+                settings.get("default_service_level", self.service_level),
+            )
+        )
         service_level = min(max(service_level, 0.5), 0.995)
         self.service_level = service_level
         self.z_value = NormalDist().inv_cdf(service_level)
@@ -405,7 +410,7 @@ class ForecastingService:
     # ------------------------------------------------------------------
     def _prophet_forecast(
         self, history: pd.Series, future_index: pd.DatetimeIndex
-    ) -> tuple[pd.Series, pd.Series, pd.Series, pd.Series]:
+    ) -> tuple[pd.Series, pd.Series, pd.Series, pd.Series, pd.Series]:
         assert HAS_PROPHET and Prophet is not None
         df = pd.DataFrame({"ds": history.index, "y": history.values})
         model = Prophet(daily_seasonality=True, weekly_seasonality=True, yearly_seasonality=True)
