@@ -138,6 +138,15 @@ class ProcurementService:
             )
             return []
 
+        try:
+            horizon_days = int(forecast.horizon_days)
+        except Exception:
+            horizon_days = len(forecast.forecast)
+        if horizon_days <= 0:
+            horizon_days = len(forecast.forecast)
+        if horizon_days <= 0:
+            horizon_days = 1
+
         daily_mean, daily_std, forecast_confidence = self._forecast_statistics(forecast)
         if daily_mean <= 1e-6 and daily_std <= 1e-6:
             LOGGER.info(
@@ -209,11 +218,21 @@ class ProcurementService:
         if sell_price is None or sell_price <= 0:
             sell_price = unit_cost * (1.0 + margin_rate)
 
+        seasonality = 1.0
+        get_seasonality = getattr(self.inventory_service, "seasonality_multiplier", None)
+        if callable(get_seasonality):
+            try:
+                seasonality = float(get_seasonality(sku_id, horizon_days))
+            except Exception:
+                seasonality = 1.0
+        if not math.isfinite(seasonality) or seasonality <= 0:
+            seasonality = 1.0
+
         gmroi_delta = self._gmroi_proxy(
             order_qty=order_qty,
             unit_cost=unit_cost,
             price=sell_price,
-            mean_demand=daily_mean,
+            mean_demand=daily_mean * seasonality,
         )
 
         total_spend = order_qty * unit_cost

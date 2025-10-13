@@ -281,27 +281,106 @@ class InventoryService:
         return self.get_unit_cost(sku_id)
 
     # ------------------------------------------------------------------
+    def _parse_ids(self, sku_id: str) -> tuple[Optional[str], Optional[str]]:
+        """Parse item and store identifiers from composite SKU identifiers."""
+
+        if not sku_id:
+            return None, None
+        parts = str(sku_id).split("_")
+        item_id = "_".join(parts[:3]) if len(parts) >= 3 else None
+        store_id = "_".join(parts[3:5]) if len(parts) >= 5 else None
+        item_id = item_id or None
+        store_id = store_id or None
+        return item_id, store_id
+
+    # ------------------------------------------------------------------
     def get_unit_price(self, sku_id: str) -> Optional[float]:
         """Return the median historical sell price for the SKU's item."""
 
         if self.prices_df is None or self.prices_df.empty:
             return None
 
-        sku_info = self.get_sku_info(sku_id)
-        item_id = sku_info.get("item_id") if sku_info else sku_id
+        item_id, store_id = self._parse_ids(sku_id)
+
         if item_id is None:
-            item_id = sku_id
+            sku_info = self.get_sku_info(sku_id)
+            item_id = sku_info.get("item_id") if sku_info else sku_id
+
+        if item_id is None:
+            return None
 
         try:
-            price_series = self.prices_df.loc[self.prices_df["item_id"] == item_id, "sell_price"]
+            price_rows = self.prices_df[self.prices_df["item_id"] == item_id]
         except KeyError:  # pragma: no cover - defensive branch
             return None
 
-        if price_series.empty:
+        if price_rows.empty:
             return None
 
-        median_price = float(price_series.median())
+        if store_id and "store_id" in price_rows.columns:
+            store_prices = price_rows[price_rows["store_id"] == store_id]
+            if not store_prices.empty:
+                price_rows = store_prices
+
+        try:
+            median_price = float(price_rows["sell_price"].median())
+        except KeyError:  # pragma: no cover - defensive branch
+            return None
+
         if not math.isfinite(median_price) or median_price <= 0:
             return None
 
         return median_price
+
+    # ------------------------------------------------------------------
+    def seasonality_multiplier(self, sku_id: str, horizon_days: int) -> float:
+        """Estimate seasonal demand uplift/downlift for the forecast horizon."""
+
+        if horizon_days <= 0:
+            return 1.0
+
+        if self.sales_df is None or self.sales_df.empty:
+            return 1.0
+
+        df = self.sales_df
+        row = pd.DataFrame()
+        if "id" in df.columns:
+            row = df[df["id"] == sku_id]
+
+        if row.empty and "item_id" in df.columns:
+            item_id, _ = self._parse_ids(sku_id)
+            lookup_id = item_id or sku_id
+            row = df[df["item_id"] == lookup_id]
+
+        if row.empty:
+            return 1.0
+
+        value_cols = [col for col in row.columns if col.startswith("d_")]
+        if not value_cols:
+            return 1.0
+
+        series = row[value_cols].T
+        series.columns = ["y"]
+        series["y"] = pd.to_numeric(series["y"], errors="coerce").fillna(0.0)
+
+        start_date = pd.Timestamp("2011-01-29")
+        dates = pd.date_range(start=start_date, periods=len(series), freq="D")
+        series["month"] = dates.month
+
+        overall_mean = float(series["y"].mean())
+        if overall_mean <= 0:
+            return 1.0
+
+        month_index = (series.groupby("month")["y"].mean() / overall_mean).to_dict()
+        if not month_index:
+            return 1.0
+
+        last_date = dates[-1]
+        next_months = [
+            (last_date + pd.Timedelta(days=offset)).month
+            for offset in range(1, horizon_days + 1)
+        ]
+        multipliers = [month_index.get(month, 1.0) for month in next_months]
+        multiplier = float(sum(multipliers) / len(multipliers))
+
+        return max(0.5, min(1.5, multiplier))
