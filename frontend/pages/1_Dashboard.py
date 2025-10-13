@@ -14,6 +14,8 @@ import streamlit as st
 import pandas as pd
 import altair as alt
 
+from ..utils.api import get_headers
+
 API_URL = os.getenv("API_URL", "http://localhost:8000/api/v1")
 
 st.title("📊 Dashboard")
@@ -28,7 +30,7 @@ sku = st.text_input("SKU ID", "HOBBIES_1_001")
 if sku:
     try:
         with st.spinner("Fetching forecast…"):
-            resp = requests.get(f"{API_URL}/forecasts/{sku}", timeout=30)
+            resp = requests.get(f"{API_URL}/forecasts/{sku}", headers=get_headers(), timeout=30)
             resp.raise_for_status()
             data = resp.json()
         df = pd.DataFrame(data["forecast"])
@@ -37,7 +39,7 @@ if sku:
         avg_demand = float(df["mean"].mean()) if not df.empty else 0.0
 
         try:
-            settings = requests.get(f"{API_URL}/configs/settings", timeout=10).json()
+            settings = requests.get(f"{API_URL}/configs/settings", headers=get_headers(), timeout=10).json()
         except Exception:
             settings = {}
 

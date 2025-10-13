@@ -10,6 +10,7 @@ import pandas as pd
 import requests
 import streamlit as st
 
+from ..utils.api import get_headers
 API_URL = os.getenv("API_URL", "http://localhost:8000/api/v1")
 
 
@@ -17,6 +18,7 @@ def _fetch_audit_log(limit: int = 200) -> List[Dict[str, Any]]:
     response = requests.get(
         f"{API_URL}/approvals/audit-log",
         params={"limit": limit},
+        headers=get_headers(),
         timeout=30,
     )
     response.raise_for_status()
