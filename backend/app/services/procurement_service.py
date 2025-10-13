@@ -114,7 +114,9 @@ class ProcurementService:
             settings.get("service_level_target", settings.get("default_service_level", 0.95))
         )
         self.default_lead_time_days = float(settings.get("lead_time_days", 7.0))
-        self.default_order_cost = float(settings.get("order_cost", 50.0))
+        self.default_order_cost = float(
+            settings.get("order_setup_cost", settings.get("order_cost", 50.0))
+        )
         self.default_margin_rate = float(settings.get("gross_margin_rate", 0.30))
 
         self.inventory_service = inventory_service or InventoryService()
@@ -220,8 +222,17 @@ class ProcurementService:
         gmroi_delta = margin_ratio * (order_qty / inventory_units_proxy)
 
         total_spend = order_qty * unit_cost
+        cash_budget = context.get("cash_budget")
+        over_budget = False
+        if cash_budget is not None:
+            try:
+                over_budget = float(total_spend) > float(cash_budget)
+            except Exception:
+                over_budget = False
+
         requires_approval = (
             total_spend > self.auto_approval_limit
+            or over_budget
             or gmroi_delta < self.gmroi_min
             or service_level < self.min_service_level
         )
