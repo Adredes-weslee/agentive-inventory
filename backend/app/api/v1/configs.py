@@ -1,68 +1,129 @@
-"""Administrative endpoints for managing YAML configuration files."""
+"""API endpoints for reading and updating configuration YAML files."""
 
 from __future__ import annotations
 
 import os
-from pathlib import Path
-from typing import Any, Dict
+import shutil
+import tempfile
+from typing import Any, Dict, Optional
 
 import yaml
 from fastapi import APIRouter, HTTPException, status
-
+from pydantic import BaseModel, Field
 
 router = APIRouter()
 
-CONFIG_DIR = "configs"
-_CONFIG_FILES = {"settings": "settings.yaml", "thresholds": "thresholds.yaml"}
+CONFIG_DIR = os.getenv("CONFIG_DIR", "configs")
+SETTINGS_PATH = os.path.join(CONFIG_DIR, "settings.yaml")
+THRESHOLDS_PATH = os.path.join(CONFIG_DIR, "thresholds.yaml")
 
 
-def _config_path(name: str) -> Path:
+def _load_yaml(path: str) -> Dict[str, Any]:
+    with open(path, "r", encoding="utf-8") as handle:
+        return yaml.safe_load(handle) or {}
+
+
+def _safe_write_yaml(path: str, payload: Dict[str, Any]) -> None:
+    directory = os.path.dirname(path) or "."
+    os.makedirs(directory, exist_ok=True)
+
+    fd, tmp_path = tempfile.mkstemp(
+        prefix=".tmp-", suffix=".yaml", dir=directory
+    )
     try:
-        filename = _CONFIG_FILES[name]
-    except KeyError as exc:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            yaml.safe_dump(payload, handle, sort_keys=False)
+        shutil.move(tmp_path, path)
+    finally:
+        if os.path.exists(tmp_path):
+            os.unlink(tmp_path)
+
+
+class SettingsUpdate(BaseModel):
+    service_level_target: Optional[float] = Field(None, ge=0.5, le=0.999)
+    carrying_cost_rate: Optional[float] = Field(None, ge=0.0, le=1.0)
+    lead_time_days: Optional[int] = Field(None, ge=0, le=365)
+    order_setup_cost: Optional[float] = Field(None, ge=0.0)
+    default_unit_cost: Optional[float] = Field(None, ge=0.0)
+
+
+class ThresholdsUpdate(BaseModel):
+    auto_approval_limit: Optional[float] = Field(None, ge=0.0)
+    min_service_level: Optional[float] = Field(None, ge=0.5, le=0.999)
+    gmroi_min: Optional[float] = Field(None, ge=0.0, le=1.0)
+
+
+def _merge_updates(original: Dict[str, Any], updates: Dict[str, Any]) -> Dict[str, Any]:
+    result = original.copy()
+    result.update({k: v for k, v in updates.items() if v is not None})
+    return result
+
+
+@router.get("/configs/settings")
+def get_settings() -> Dict[str, Any]:
+    try:
+        return _load_yaml(SETTINGS_PATH)
+    except FileNotFoundError as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail={"error": "config_not_found", "message": f"Unknown config '{name}'."},
+            detail={
+                "error": "not_found",
+                "message": "settings.yaml not found",
+            },
         ) from exc
 
-    base_dir = Path(CONFIG_DIR)
-    if not base_dir.exists():
-        base_dir.mkdir(parents=True, exist_ok=True)
 
-    return base_dir / filename
+@router.put("/configs/settings")
+def put_settings(body: SettingsUpdate) -> Dict[str, Any]:
+    try:
+        current = _load_yaml(SETTINGS_PATH)
+    except FileNotFoundError:
+        current = {}
 
+    updated = _merge_updates(current, body.model_dump(exclude_none=True))
+    if updated == current:
+        return current
 
-def _load_config(path: Path) -> Dict[str, Any]:
-    if not path.exists():
-        return {}
-    with path.open("r", encoding="utf-8") as handle:
-        data = yaml.safe_load(handle) or {}
-    if not isinstance(data, dict):
+    try:
+        _safe_write_yaml(SETTINGS_PATH, updated)
+    except OSError as exc:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={"error": "write_failed", "message": str(exc)},
+        ) from exc
+    return updated
+
+
+@router.get("/configs/thresholds")
+def get_thresholds() -> Dict[str, Any]:
+    try:
+        return _load_yaml(THRESHOLDS_PATH)
+    except FileNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
             detail={
-                "error": "invalid_config",
-                "message": f"Configuration at '{os.fspath(path)}' must be a mapping.",
+                "error": "not_found",
+                "message": "thresholds.yaml not found",
             },
-        )
-    return dict(data)
+        ) from exc
 
 
-@router.get("/configs/{config_name}")
-def get_config(config_name: str) -> Dict[str, Any]:
-    """Return the contents of a configuration file as JSON."""
+@router.put("/configs/thresholds")
+def put_thresholds(body: ThresholdsUpdate) -> Dict[str, Any]:
+    try:
+        current = _load_yaml(THRESHOLDS_PATH)
+    except FileNotFoundError:
+        current = {}
 
-    path = _config_path(config_name)
-    return _load_config(path)
+    updated = _merge_updates(current, body.model_dump(exclude_none=True))
+    if updated == current:
+        return current
 
-
-@router.put("/configs/{config_name}")
-def update_config(config_name: str, payload: Dict[str, Any]) -> Dict[str, Any]:
-    """Merge ``payload`` into the stored configuration and persist it."""
-
-    path = _config_path(config_name)
-    existing = _load_config(path)
-    existing.update(payload)
-    with path.open("w", encoding="utf-8") as handle:
-        yaml.safe_dump(existing, handle, sort_keys=True)
-    return existing
+    try:
+        _safe_write_yaml(THRESHOLDS_PATH, updated)
+    except OSError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={"error": "write_failed", "message": str(exc)},
+        ) from exc
+    return updated

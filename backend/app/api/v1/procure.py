@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Dict, Iterable, List
+from typing import Iterable, List
 
 import yaml
 from fastapi import APIRouter, HTTPException, status
@@ -117,12 +117,17 @@ class ProcurementRequest(BaseModel):
     )
 
 
-class ExplainRequest(BaseModel):
-    """Payload for LLM-backed explanation requests."""
+class ExplanationRequest(BaseModel):
+    """Validated payload for requesting recommendation explanations."""
 
-    sku_id: str = Field(..., min_length=1)
-    horizon_days: int = Field(..., ge=1)
-    recommendations: List[Dict[str, object]] = Field(default_factory=list)
+    sku_id: str = Field(..., description="SKU identifier from the M5 dataset", min_length=1)
+    horizon_days: int = Field(
+        DEFAULT_HORIZON_DAYS,
+        description="Forecast horizon in days used for procurement planning",
+        ge=MIN_FORECAST_HORIZON_DAYS,
+        le=MAX_FORECAST_HORIZON_DAYS,
+    )
+    recommendations: List[schemas.ReorderRec]
 
 
 @router.post("/procure/recommendations", response_model=List[schemas.ReorderRec])
@@ -189,17 +194,58 @@ async def get_recommendations(body: ProcurementRequest) -> List[schemas.ReorderR
 
 
 @router.post("/procure/recommendations/explain")
-async def explain_recommendations(body: ExplainRequest) -> Dict[str, str]:
-    """Return a natural language explanation for the provided recommendations."""
+async def explain(body: ExplanationRequest) -> dict[str, str]:
+    """Return an LLM-generated rationale for recommendations, if enabled."""
+
+    LOGGER.info(
+        "Procurement explanation request received for sku_id=%s horizon=%s", body.sku_id, body.horizon_days
+    )
 
     if not os.getenv("GEMINI_API_KEY"):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="LLM integration disabled")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=_error_payload("feature_disabled", "Explanation service is disabled."),
+        )
+
+    config_dir = os.getenv("CONFIG_DIR", "configs")
+    settings: dict[str, object]
+    thresholds: dict[str, object]
+
+    try:
+        with open(os.path.join(config_dir, "settings.yaml"), "r", encoding="utf-8") as handle:
+            settings = yaml.safe_load(handle) or {}
+    except FileNotFoundError:
+        settings = {}
+    except Exception as exc:  # pragma: no cover - defensive programming
+        LOGGER.warning("Failed to load settings.yaml: %s", exc)
+        settings = {}
+
+    try:
+        with open(os.path.join(config_dir, "thresholds.yaml"), "r", encoding="utf-8") as handle:
+            thresholds = yaml.safe_load(handle) or {}
+    except FileNotFoundError:
+        thresholds = {}
+    except Exception as exc:  # pragma: no cover - defensive programming
+        LOGGER.warning("Failed to load thresholds.yaml: %s", exc)
+        thresholds = {}
 
     context = {
         "sku_id": body.sku_id,
         "horizon_days": body.horizon_days,
-        "settings": _load_yaml_config("settings.yaml"),
-        "thresholds": _load_yaml_config("thresholds.yaml"),
+        "settings": settings,
+        "thresholds": thresholds,
     }
-    explanation = explain_recommendation(context, body.recommendations)
-    return {"explanation": explanation}
+
+    try:
+        explanation = explain_recommendation(context, [rec.model_dump() for rec in body.recommendations])
+    except Exception as exc:  # pragma: no cover - defensive programming
+        LOGGER.exception("Explanation generation failed for sku_id=%s: %s", body.sku_id, exc)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=_error_payload("llm_error", "Explanation service failed."),
+        ) from exc
+
+    explanation_text = (explanation or "").strip() or (
+        "Automated explanation was empty; please review the numeric rationale."
+    )
+    return {"explanation": explanation_text}
