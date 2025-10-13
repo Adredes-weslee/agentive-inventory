@@ -10,7 +10,7 @@ variables and YAML files in `configs/`.
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from .api.v1 import forecasts, procure, health
+from .api.v1 import approvals, forecasts, health, procure
 
 app = FastAPI(title="Agentive Inventory API", version="0.1.0")
 
@@ -26,3 +26,5 @@ app.add_middleware(
 app.include_router(health.router, prefix="/api/v1")
 app.include_router(forecasts.router, prefix="/api/v1")
 app.include_router(procure.router, prefix="/api/v1")
+app.include_router(approvals.router, prefix="/api/v1")
+
