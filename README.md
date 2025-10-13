@@ -1,121 +1,230 @@
 # Agentive Inventory Management System
 
-This repository implements a multi‑agent inventory management system built around a set of cooperating services and a human in the loop.  It follows the architecture described in the provided solution documents and uses the **M5 Forecasting** dataset (Walmart daily item sales with promotions, prices and events) as the canonical source of demand history.  The goal of this system is to forecast demand for individual SKUs, generate procurement recommendations that maximise gross margin return on investment (GMROI) subject to business guardrails and allow human operators to review, adjust and approve those recommendations via a simple web interface.
+Agentic, human-in-the-loop inventory planning. This repo provides:
 
-## Repository layout
+* **FastAPI** backend for forecasts & procurement (EOQ/ROP + guardrails)
+* **Streamlit** UI (“Human Collaboration Hub”)
+* **Configs** for business context & thresholds
+* **n8n** workflow example (daily ingest → forecast → recommend → approve)
+
+It uses the **M5 Forecasting** dataset (Walmart) as the canonical demand history.
+
+---
+
+## Repo layout
 
 ```
-agentive‑inventory/
-├── README.md                # This file
-├── .env.example             # Example environment variables for local development
-├── pyproject.toml           # Development tooling configuration (ruff, mypy, pytest)
-├── configs/
-│   ├── settings.yaml        # Business/operational context and defaults (MCP fields)
-│   └── thresholds.yaml      # Guardrails such as approval limits and service levels
-├── data/                    # Place the M5 dataset files here
-│   ├── sales_train_validation.csv
-│   ├── calendar.csv
-│   └── sell_prices.csv
-├── backend/                 # FastAPI backend exposing forecasting and procurement APIs
-│   ├── app/
-│   │   ├── main.py          # Application entrypoint
-│   │   ├── api/v1/
-│   │   │   ├── forecasts.py # GET /forecasts/{sku_id}
-│   │   │   ├── procure.py   # POST /procure/recommendations
-│   │   │   └── health.py    # GET /health
-│   │   ├── core/config.py   # Settings and configuration loading
-│   │   ├── models/schemas.py# Pydantic models used in the API
-│   │   └── services/
-│   │       ├── inventory_service.py   # Inventory state and SKU metadata access
-│   │       ├── forecasting_service.py # Demand forecasting from M5 data
-│   │       ├── procurement_service.py # Procurement logic and guardrails
-│   │       └── llm_service.py         # Optional Gemini API integration
-│   ├── Dockerfile            # Container build for backend
-│   └── requirements.txt      # Backend dependencies
-├── orchestration/
-│   ├── n8n_workflows/        # Example n8n workflow JSON for end‑to‑end orchestration
-│   │   └── example_workflow.json
-│   └── README.md             # Notes about orchestration
-├── frontend/                 # Streamlit user interface
-│   ├── app.py               # Top level multipage app
-│   ├── pages/
-│   │   ├── 1_Dashboard.py   # Key performance indicators (KPIs)
-│   │   ├── 2_Forecasts.py   # Forecast visualisation and overrides
-│   │   ├── 3_Recommendations.py # Purchase recommendation review and approval
-│   │   └── 4_Settings.py    # Adjust guardrails and context
-│   └── requirements.txt     # Frontend dependencies
-├── infra/
-│   ├── docker-compose.yml    # Local development stack: API + UI
-│   ├── render.yaml           # Example configuration for deployment on Render
-│   └── k8s/                  # Placeholder for optional Kubernetes manifests
-└── .github/workflows/
-    └── ci.yml               # Continuous integration pipeline using GitHub Actions
+agentive-inventory/
+├─ README.md
+├─ .env.example
+├─ pyproject.toml
+├─ configs/
+│  ├─ settings.yaml
+│  └─ thresholds.yaml
+├─ data/                     # Put M5 CSVs here (not committed)
+│  ├─ sales_train_validation.csv
+│  ├─ calendar.csv
+│  └─ sell_prices.csv
+├─ backend/
+│  ├─ app/
+│  │  ├─ main.py
+│  │  ├─ api/v1/{forecasts.py, procure.py, health.py}
+│  │  ├─ core/config.py
+│  │  ├─ models/schemas.py
+│  │  └─ services/{forecasting_service.py, procurement_service.py, inventory_service.py, llm_service.py}
+│  ├─ requirements.txt
+│  └─ Dockerfile
+├─ frontend/
+│  ├─ app.py
+│  ├─ pages/{1_Dashboard.py, 2_Forecasts.py, 3_Recommendations.py, 4_Settings.py}
+│  └─ requirements.txt
+├─ orchestration/n8n_workflows/example_workflow.json
+├─ infra/{docker-compose.yml, render.yaml, k8s/}
+└─ .github/workflows/ci.yml
 ```
 
-## Using the M5 dataset
+---
 
-The [M5 Forecasting dataset](https://www.kaggle.com/competitions/m5-forecasting-accuracy) consists of three CSV files:
+## Data (M5)
 
-| file                          | description                                                             |
-|------------------------------|---------------------------------------------------------------------------|
-| `sales_train_validation.csv` | Daily unit sales for each product in each store. Columns `d_1`, … represent successive days. |
-| `calendar.csv`               | Mapping from `d_*` columns to actual calendar dates and event annotations. |
-| `sell_prices.csv`            | Weekly sale prices of products by store.                                   |
+Download from the official **M5 Forecasting – Accuracy** competition page and place the CSVs in `./data/`. Files:
 
-For privacy and licensing reasons these files are **not included** in this repository.  To use the system you must download the dataset from Kaggle and place the CSVs inside the `data/` directory as shown above.  The backend services will automatically load the files when available.
+* `sales_train_validation.csv`
+* `calendar.csv`
+* `sell_prices.csv`
 
-## Quick start
+These are **not** included in the repo.
 
-1. Clone this repository and change into the directory:
+---
 
-   ```bash
-   git clone <your‑repo>.git
-   cd agentive‑inventory
-   ```
+## Quick start (local)
 
-2. Download the three M5 dataset files from Kaggle and place them in the `data/` folder.
+### Windows (PowerShell)
 
-   ```text
-   data/
-   ├── sales_train_validation.csv
-   ├── sell_prices.csv
-   └── calendar.csv
-   ```
+```powershell
+# 1) Clone
+git clone <your-repo-url>.git
+cd agentive-inventory
 
-   The service validates that each file exists before serving forecasts or procurement guidance.
+# 2) Place M5 CSVs into .\data\
+#    sales_train_validation.csv, calendar.csv, sell_prices.csv
 
-3. Copy `.env.example` to `.env` and fill in your configuration, especially your `GEMINI_API_KEY` if you plan to use the optional LLM features.
+# 3) Backend
+pip install -r backend/requirements.txt
+uvicorn app.main:app --app-dir backend/app --reload
 
-4. Build and run the backend locally using Docker Compose:
+# 4) Frontend (new terminal)
+cd frontend
+pip install -r requirements.txt
+$env:API_URL = "http://localhost:8000/api/v1"
+streamlit run app.py
+```
 
-   ```bash
-   docker compose up --build
-   ```
+### macOS/Linux
 
-   This will start the FastAPI backend on `http://localhost:8000` and the Streamlit UI on `http://localhost:8501`.
+```bash
+git clone <your-repo-url>.git
+cd agentive-inventory
+# Put M5 CSVs into ./data
+pip install -r backend/requirements.txt
+uvicorn app.main:app --app-dir backend/app --reload
+# new terminal
+cd frontend && pip install -r requirements.txt
+export API_URL="http://localhost:8000/api/v1"
+streamlit run app.py
+```
 
-5. Navigate to the Streamlit UI to explore forecasts and procurement recommendations.
+---
 
-6. (Optional) Run the backend unit tests locally to verify the deterministic forecasting and procurement guardrails:
+## API smoke tests
 
-   ```bash
-   poetry run pytest backend/tests
-   ```
+**Find a real M5 SKU id** (first row id):
 
-   The tests use lightweight synthetic M5 extracts so they execute quickly without the full dataset.
+*PowerShell*
 
-### Configuration quick reference
+```powershell
+Get-Content .\data\sales_train_validation.csv -TotalCount 2 | Select-Object -Last 1
+# copy the first field up to the first comma (that's the id)
+```
 
-- `configs/settings.yaml` — operational context such as `service_level_target`, `lead_time_days`, `carrying_cost_rate`, `order_cost` and `gross_margin_rate`. These values feed directly into the EOQ/ROP calculations.
-- `configs/thresholds.yaml` — guardrails including `auto_approval_limit`, `min_service_level`, `gmroi_min` and `max_cash_outlay`. Recommendations that breach these thresholds are flagged for manual approval in the UI.
+*macOS/Linux*
 
-## Design philosophy
+```bash
+head -n2 data/sales_train_validation.csv | tail -n1 | cut -d, -f1
+```
 
-The system is composed of loosely coupled services communicating via HTTP and orchestrated by an external workflow engine such as [n8n](https://n8n.io/).  Core design principles include:
+**Call the API** (replace `<SKU_ID>`):
 
-- **Hybrid forecasting**: combine classical time‑series models (e.g. Prophet) and machine learning models (e.g. XGBoost) based on SKU characteristics such as ABC classification and gross margins.  A naive baseline is provided but can be replaced with more sophisticated models.
-- **Guardrails and supervised autonomy**: procurement recommendations follow business rules (minimum service level, maximum cash outlay) and are flagged for human approval when confidence is low or spend is high.
-- **Human collaboration hub**: a Streamlit application exposes forecasts, KPIs and recommendations to human operators who can override or approve agent decisions.
-- **Extensibility**: additional services (e.g. price optimisation, promotion planning) can be plugged in with minimal changes.  Configuration is externalised into YAML files under `configs/`.
+*PowerShell*
 
-We encourage you to explore the code, adapt the forecasting logic to your needs and extend the orchestration workflows to support your business processes.
+```powershell
+Invoke-RestMethod "http://localhost:8000/api/v1/forecasts/<SKU_ID>?horizon_days=28"
+Invoke-RestMethod -Method Post "http://localhost:8000/api/v1/procure/recommendations" `
+  -Body (@{ sku_id = "<SKU_ID>"; horizon_days = 28 } | ConvertTo-Json) -ContentType "application/json"
+```
+
+*macOS/Linux*
+
+```bash
+curl "http://localhost:8000/api/v1/forecasts/<SKU_ID>?horizon_days=28"
+curl -X POST "http://localhost:8000/api/v1/procure/recommendations" \
+  -H "Content-Type: application/json" \
+  -d '{"sku_id":"<SKU_ID>","horizon_days":28}'
+```
+
+Expected:
+
+* `/forecasts` returns `horizon_days` points with fields: `date, mean, lo, hi, model, confidence`.
+* `/procure/recommendations` returns a list with `order_qty, reorder_point, gmroi_delta, confidence, requires_approval`.
+
+---
+
+## Test & debug guide
+
+### Quick tests
+
+```bash
+pip install pytest
+pytest backend/tests -q
+```
+
+Notes:
+
+* Tests **skip** if M5 CSVs are missing.
+* If a test fails, read the error for the missing file or shape mismatch.
+
+### Common issues → fixes
+
+* **File not found (calendar or sales CSVs)**
+  Put the three M5 CSVs into `./data/` and restart the backend.
+* **404 “SKU not found”**
+  Use a valid id from the first column of `sales_train_validation.csv`.
+* **CORS / UI can’t reach API**
+  Ensure `API_URL` is set in the UI environment to your API origin (localhost or Render URL).
+  If deploying, allow CORS origins in `backend/app/main.py` via `CORS_ORIGINS`.
+* **Port already in use**
+  Change the port: `uvicorn app.main:app --app-dir backend/app --port 8001`.
+* **Slow first call**
+  The service caches calendar and sales header columns after the first hit; warm up by calling `/api/v1/health`, then `/forecasts`.
+* **Procurement `requires_approval` always true/false**
+  Tune `configs/thresholds.yaml` (`auto_approval_limit, min_service_level, gmroi_min`) and `configs/settings.yaml` (`service_level_target, carrying_cost_rate, lead_time_days`).
+
+### Logging tips
+
+* Start uvicorn with access logs and debug:
+
+  ```bash
+  uvicorn app.main:app --app-dir backend/app --reload --log-level debug
+  ```
+* Add prints/logs where needed in `services/*` (e.g., chosen model, EOQ/ROP inputs).
+
+### Sanity checks
+
+* Choose 2–3 SKUs with different volumes; confirm:
+
+  * Forecast dates are contiguous and length matches `horizon_days`.
+  * Procurement returns a positive `order_qty` and plausible `reorder_point`.
+  * Flipping thresholds changes `requires_approval` as expected.
+
+---
+
+## Configuration quick reference
+
+* `configs/settings.yaml` → `service_level_target`, `lead_time_days`, `carrying_cost_rate`, `order_setup_cost`
+* `configs/thresholds.yaml` → `auto_approval_limit`, `min_service_level`, `gmroi_min`
+* `.env` (copy from `.env.example`) → optional `GEMINI_API_KEY`, `API_PORT`, etc.
+
+---
+
+## Docker / Compose (local)
+
+```bash
+docker compose up --build
+```
+
+Exposes API on `http://localhost:8000` and UI on `http://localhost:8501`.
+Mount `./data` to make M5 files visible inside the containers (see `infra/docker-compose.yml`).
+
+---
+
+## Deploy (Render)
+
+Two services in **Render**:
+
+* **agentive-api** (rootDir=`backend`)
+  Build: `pip install -r requirements.txt`
+  Start: `uvicorn app.main:app --host 0.0.0.0 --port $PORT`
+  Env: `GEMINI_API_KEY` (optional), `DATA_DIR=/data` if using persistent disk.
+* **agentive-ui** (rootDir=`frontend`)
+  Build: `pip install -r requirements.txt`
+  Start: `streamlit run app.py --server.port $PORT --server.address 0.0.0.0`
+  Env: `API_URL=https://<your-api>.onrender.com/api/v1`
+
+---
+
+## Roadmap (optional)
+
+* Add Prophet/XGBoost model switch + backtesting route
+* Improve GMROI proxy and add cash budget constraints
+* Streamlit approvals & audit log
+* n8n scheduled daily flow (import `orchestration/n8n_workflows/example_workflow.json`)
