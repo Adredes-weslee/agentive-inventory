@@ -160,6 +160,25 @@ Notes:
 
 ---
 
+## Runbook
+
+### Backtesting
+1. Open the **🧪 Backtest** page in the Streamlit UI.
+2. Enter a valid M5 row id, choose the `window`, `horizon`, and `step` parameters, then submit.
+3. Select a model (`auto`, `sma`, `prophet`, or `xgb`). The API returns metrics (MAPE, prediction interval coverage) and offers CSV export.
+
+### Approvals & audit log
+1. Visit the **3_Recommendations** page to review pending rows, then click **Approve** or **Reject** with an optional note.
+2. Switch to **🗒️ Audit Log** to view decisions. On Render, entries persist when the API service has a disk attached.
+
+### Render deployment checklist
+* The API service defined in `infra/render.yaml` should mount a persistent disk at `/data`; the audit log (`audit_log.jsonl`) will be stored there across deploys.
+* Set `API_TOKEN` on the API service and configure the Streamlit UI to send that token for protected endpoints.
+* Restrict cross-origin access by setting `CORS_ORIGINS` to your Streamlit URL (e.g., `https://<your-ui>.onrender.com`).
+* Apply rate limiting at the edge (Render firewall or CDN) and rotate tokens regularly to minimize risk of abuse.
+
+---
+
 ## Configuration quick reference
 
 * `configs/settings.yaml` → `service_level_target`, `lead_time_days`, `carrying_cost_rate`, `order_setup_cost`
