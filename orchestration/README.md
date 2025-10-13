@@ -1,16 +1,21 @@
-This folder contains example orchestration workflows used to connect the
-services in this repository.  The workflows are designed for the
-[n8n](https://n8n.io/) automation tool, but the concepts are applicable
-to any orchestration engine.
+This folder contains example orchestration workflows for connecting the backend API to a daily agent flow using **n8n**.
 
-The `example_workflow.json` file demonstrates a simple end‑to‑end flow:
+### Import
+1. Launch n8n (Compose brings it up at http://localhost:5678).
+2. In n8n → **Workflows** → **Import from file** → select `n8n_workflows/example_workflow.json`.
 
-1. Trigger: a scheduler fires daily at a configured time.
-2. Fetch demand history: call the backend `/forecasts/{sku_id}` endpoint to obtain a forecast for a specific SKU.
-3. Compute procurement: call the `/procure/recommendations` endpoint with the forecast.
-4. Explain: optionally call the LLM service to produce a human‑friendly explanation.
-5. Notify: send the recommendation and explanation to a human approver via email or chat.
-6. Await response: pause until the human approves or rejects the recommendation.
-7. Store: record the decision in a database or data warehouse.
+### Configure
+- Set env `API_URL` inside n8n (or edit HTTP Request node URLs):
+  - Compose: `http://backend:8000/api/v1`
+  - Local dev: `http://localhost:8000/api/v1`
+  - Render: `https://<your-api>.onrender.com/api/v1`
+- Change `sku_id` in the first Set node.
 
-You can import the JSON file into n8n to see the structure and customise it for your use case.
+### Flow
+1. Schedule (daily 06:00)
+2. Forecast → `GET /forecasts/{sku_id}`
+3. Procure → `POST /procure/recommendations`
+4. Explain (optional)
+5. Notify approver
+6. Await approval
+7. Store audit record
