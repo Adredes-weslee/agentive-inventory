@@ -71,27 +71,12 @@ cd agentive-inventory
 
 # 3) Backend
 pip install -r backend/requirements.txt
-uvicorn app.main:app --app-dir backend/app --reload
+python -m uvicorn backend.app.main:app --reload
 
 # 4) Frontend (new terminal)
-cd frontend
 pip install -r requirements.txt
 $env:API_URL = "http://localhost:8000/api/v1"
-streamlit run app.py
-```
-
-### macOS/Linux
-
-```bash
-git clone <your-repo-url>.git
-cd agentive-inventory
-# Put M5 CSVs into ./data
-pip install -r backend/requirements.txt
-uvicorn app.main:app --app-dir backend/app --reload
-# new terminal
-cd frontend && pip install -r requirements.txt
-export API_URL="http://localhost:8000/api/v1"
-streamlit run app.py
+python -m streamlit run frontend/app.py
 ```
 
 ---
@@ -107,11 +92,6 @@ Get-Content .\data\sales_train_validation.csv -TotalCount 2 | Select-Object -Las
 # copy the first field up to the first comma (that's the id)
 ```
 
-*macOS/Linux*
-
-```bash
-head -n2 data/sales_train_validation.csv | tail -n1 | cut -d, -f1
-```
 
 **Call the API** (replace `<SKU_ID>`):
 
@@ -123,14 +103,6 @@ Invoke-RestMethod -Method Post "http://localhost:8000/api/v1/procure/recommendat
   -Body (@{ sku_id = "<SKU_ID>"; horizon_days = 28 } | ConvertTo-Json) -ContentType "application/json"
 ```
 
-*macOS/Linux*
-
-```bash
-curl "http://localhost:8000/api/v1/forecasts/<SKU_ID>?horizon_days=28"
-curl -X POST "http://localhost:8000/api/v1/procure/recommendations" \
-  -H "Content-Type: application/json" \
-  -d '{"sku_id":"<SKU_ID>","horizon_days":28}'
-```
 
 Expected:
 
@@ -174,7 +146,7 @@ Notes:
 * Start uvicorn with access logs and debug:
 
   ```bash
-  uvicorn app.main:app --app-dir backend/app --reload --log-level debug
+  python -m uvicorn backend.app.main:app --reload --log-level debug
   ```
 * Add prints/logs where needed in `services/*` (e.g., chosen model, EOQ/ROP inputs).
 
