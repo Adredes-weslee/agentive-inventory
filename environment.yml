@@ -1,0 +1,23 @@
+name: agentive-inventory-test
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.10
+  - fastapi
+  - pydantic
+  - pandas
+  - numpy
+  - prophet
+  - xgboost
+  - scikit-learn
+  - sqlmodel
+  - pyyaml
+  - requests
+  - streamlit
+  - altair
+  - pip
+  - pip:
+      - uvicorn[standard]
+      - google-generativeai
+      - pytest
