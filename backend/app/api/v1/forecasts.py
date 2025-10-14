@@ -5,6 +5,7 @@ Routes for demand forecasting."""
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from typing import Callable, Iterable
 
 from fastapi import APIRouter, HTTPException, Query, status
@@ -33,9 +34,9 @@ def _error_payload(code: str, message: str) -> dict[str, str]:
 def _validate_sku(sku_id: str) -> None:
     """Ensure that the SKU exists before attempting a forecast."""
 
-    has_sku: Callable[[str], bool]
-    has_sku = getattr(_inventory_service, "has_sku", _inventory_service.sku_exists)
-    if getattr(_inventory_service, "sales_df", None) is None:
+    has_sku: Callable[[str], bool] = getattr(_inventory_service, "has_sku", _inventory_service.sku_exists)
+    sales_path = Path(_inventory_service.data_root) / "sales_train_validation.csv"
+    if not sales_path.exists() and not sales_path.with_suffix(".parquet").exists():
         LOGGER.error("Inventory datasets missing while validating forecast request for sku_id=%s", sku_id)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,

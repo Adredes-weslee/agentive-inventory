@@ -4,16 +4,20 @@ from __future__ import annotations
 
 import os
 import logging
+from pathlib import Path
 from typing import List
 
-import pandas as pd
 from fastapi import APIRouter, HTTPException, Query, status
+
+from ...services.inventory_service import InventoryService
 
 LOGGER = logging.getLogger(__name__)
 router = APIRouter()
 
 DATA_DIR = os.getenv("DATA_DIR", "data")
 SALES_PATH = os.path.join(DATA_DIR, "sales_train_validation.csv")
+
+_inventory_service = InventoryService()
 
 DEFAULT_SAMPLE_IDS: List[str] = [
     "FOODS_1_001_CA_1_validation",
@@ -27,14 +31,14 @@ def _error(code: str, message: str) -> dict[str, str]:
 @router.get("/catalog/ids")
 def get_ids(limit: int = Query(20, ge=1, le=1000)) -> dict[str, List[str]]:
     """Return up to `limit` M5 row ids for UI typeahead."""
-    if not os.path.exists(SALES_PATH):
+    sales_file = Path(SALES_PATH)
+    if not sales_file.exists() and not sales_file.with_suffix(".parquet").exists():
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=_error("data_unavailable", f"{SALES_PATH} not found. Place M5 CSVs in ./data."),
         )
     try:
-        df = pd.read_csv(SALES_PATH, usecols=["id"], nrows=limit)
-        ids: List[str] = [str(x) for x in df["id"].dropna().tolist() if str(x).strip()]
+        ids = _inventory_service.list_ids(limit)
 
         if ids:
             present = set(ids)
