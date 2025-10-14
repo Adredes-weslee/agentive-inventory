@@ -11,7 +11,7 @@ services:
       # expose repo-root data/ & configs/ to code expecting backend-local paths
       ln -sfn ../data data || true
       ln -sfn ../configs configs || true
-    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT --workers 1
     healthCheckPath: /api/v1/health
     envVars:
       - key: LOG_LEVEL
@@ -27,6 +27,18 @@ services:
         sync: false
       - key: RATE_LIMIT_PER_MIN
         value: "60"
+      - key: MPLBACKEND
+        value: Agg
+      - key: MPLCONFIGDIR
+        value: /tmp
+      - key: OMP_NUM_THREADS
+        value: "1"
+      - key: OPENBLAS_NUM_THREADS
+        value: "1"
+      - key: MKL_NUM_THREADS
+        value: "1"
+      - key: NUMEXPR_MAX_THREADS
+        value: "1"
 
   # --- Streamlit UI ---------------------------------------------------------
   - type: web
@@ -45,16 +57,14 @@ services:
   # # --- (Optional) n8n on free tier (no disk; state resets on redeploy) ------
   # - type: web
   #   name: agentive-n8n
-  #   runtime: docker
+  #   runtime: image
   #   image:
   #     url: n8nio/n8n:latest
-  #   healthCheckPath: /
   #   dockerCommand: sh -lc 'export N8N_PORT=$PORT; n8n start'
+  #   healthCheckPath: /rest/healthz
   #   envVars:
   #     - key: N8N_HOST
   #       value: agentive-n8n.onrender.com
-  #     - key: N8N_PORT
-  #       value: "10000"
   #     - key: WEBHOOK_URL
   #       value: https://agentive-n8n.onrender.com/
   #     - key: API_URL
