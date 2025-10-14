@@ -1,4 +1,5 @@
-"""
+r"""frontend/pages/1_Dashboard.py
+
 Dashboard page displaying simple KPIs.
 
 This page provides a high‑level overview of inventory performance.  In a

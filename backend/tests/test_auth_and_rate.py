@@ -1,3 +1,5 @@
+r"""backend/tests/test_auth_and_rate.py"""
+
 from __future__ import annotations
 
 import sys

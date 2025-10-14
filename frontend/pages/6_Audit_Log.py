@@ -1,4 +1,6 @@
-"""Audit log page for approvals."""
+r"""frontend/pages/6_Audit_Log.py
+
+Audit log page for approvals."""
 
 from __future__ import annotations
 

@@ -1,4 +1,5 @@
-"""
+r"""backend/app/services/llm_service.py
+
 Optional integration with Google's Gemini (genai) API.
 
 This service provides functions to generate human‑readable explanations for

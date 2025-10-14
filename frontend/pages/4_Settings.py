@@ -1,4 +1,5 @@
-"""
+r"""frontend/pages/4_Settings.py
+
 Settings page for configuring business parameters.
 
 This page loads the YAML configuration files under ``configs/`` and displays

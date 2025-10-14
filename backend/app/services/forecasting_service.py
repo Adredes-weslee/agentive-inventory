@@ -1,4 +1,6 @@
-"""Demand forecasting service built around the M5 competition dataset.
+r"""backend\app\services\forecasting_service.py
+
+Demand forecasting service built around the M5 competition dataset.
 
 The implementation follows a tiered modelling strategy inspired by the
 M5 forecasting competition.  Depending on the SKU importance and the

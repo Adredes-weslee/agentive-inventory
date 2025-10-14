@@ -1,4 +1,5 @@
-"""
+r"""frontend/app.py
+
 Streamlit multipage application for the Agentive Inventory system.
 
 This file configures global options and provides a simple welcome page.

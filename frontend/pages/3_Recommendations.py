@@ -1,4 +1,6 @@
-"""Streamlit page for procurement recommendations."""
+r"""frontend/pages/3_Recommendations.py
+
+Streamlit page for procurement recommendations."""
 
 from __future__ import annotations
 

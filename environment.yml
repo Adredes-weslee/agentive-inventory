@@ -1,3 +1,5 @@
+# environment.yml
+
 name: agentive-inventory
 channels:
   - conda-forge

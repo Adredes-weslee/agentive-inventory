@@ -1,4 +1,6 @@
-"""Inventory helper utilities built on top of the M5 dataset."""
+r"""backend\app\services\inventory_service.py
+
+Inventory helper utilities built on top of the M5 dataset."""
 
 from __future__ import annotations
 

@@ -1,3 +1,5 @@
+# pyproject.toml
+
 [tool.poetry]
 name = "agentive-inventory"
 version = "0.1.0"

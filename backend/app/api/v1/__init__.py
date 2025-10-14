@@ -1,4 +1,6 @@
-"""Versioned API routers for the FastAPI application."""
+r"""backend\app\api\v1\__init__.py
+
+Versioned API routers for the FastAPI application."""
 
 from importlib import import_module
 from typing import Any

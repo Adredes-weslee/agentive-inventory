@@ -1,4 +1,6 @@
-"""Generate procurement recommendations using EOQ/ROP logic."""
+r"""backend\app\services\procurement_service.py
+
+Generate procurement recommendations using EOQ/ROP logic."""
 
 from __future__ import annotations
 

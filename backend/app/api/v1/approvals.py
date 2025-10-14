@@ -1,4 +1,6 @@
-"""Endpoints for managing manual approval workflows."""
+r"""backend\app\api\v1\approvals.py
+
+Endpoints for managing manual approval workflows."""
 
 from __future__ import annotations
 

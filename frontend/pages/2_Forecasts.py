@@ -1,4 +1,6 @@
-"""Streamlit page for per-SKU demand forecasts."""
+r"""frontend/pages/2_Forecasts.py
+
+Streamlit page for per-SKU demand forecasts."""
 
 from __future__ import annotations
 

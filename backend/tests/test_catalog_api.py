@@ -1,3 +1,5 @@
+r"""backend/tests/test_catalog_api.py"""
+
 from __future__ import annotations
 
 import sys

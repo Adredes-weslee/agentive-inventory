@@ -1,4 +1,5 @@
-"""
+r"""backend\app\api\v1\health.py
+
 Health check endpoints.
 
 These endpoints can be used by orchestrators and load balancers to verify

@@ -1,4 +1,6 @@
-"""API endpoints for reading and updating configuration YAML files."""
+r"""backend\app\api\v1\configs.py
+
+API endpoints for reading and updating configuration YAML files."""
 
 from __future__ import annotations
 

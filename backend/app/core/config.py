@@ -1,4 +1,5 @@
-"""
+r"""backend\app\core\config.py
+
 Application configuration utilities.
 
 This module defines the ``Settings`` class used throughout the service for
