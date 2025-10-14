@@ -9,7 +9,7 @@ import pandas as pd
 import requests
 import streamlit as st
 
-from ..utils.api import get_headers
+from utils.api import get_api_token, get_headers
 
 API_URL = os.getenv("API_URL", "http://localhost:8000/api/v1")
 
@@ -108,14 +108,14 @@ def _explain_recommendations(
 
 
 @st.cache_data(ttl=300)
-def _get_catalog_ids(limit: int = 50) -> List[str]:
+def _get_catalog_ids(limit: int = 50, api_token: str = "") -> List[str]:
     """Fetch a sample of catalog row identifiers for convenience selections."""
 
     try:
         response = requests.get(
             f"{API_URL}/catalog/ids",
             params={"limit": limit},
-            headers=get_headers(),
+            headers=get_headers(api_token),
             timeout=15,
         )
         response.raise_for_status()
@@ -266,7 +266,7 @@ with tab_batch:
         "Recommendations will be prioritised by GMROI delta when applying a budget."
     )
 
-    catalog_options = _get_catalog_ids(limit=1000)
+    catalog_options = _get_catalog_ids(limit=1000, api_token=get_api_token())
     selected_catalog_ids: List[str] = []
 
     with st.form(key="batch_form"):
