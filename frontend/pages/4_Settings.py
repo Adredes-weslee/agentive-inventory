@@ -47,9 +47,6 @@ def load_from_api(kind: str) -> dict:
 settings_data = load_from_api("settings") or load_yaml(SETTINGS_PATH)
 thresholds_data = load_from_api("thresholds") or load_yaml(THRESHOLDS_PATH)
 
-settings_data = load_yaml(SETTINGS_PATH)
-thresholds_data = load_yaml(THRESHOLDS_PATH)
-
 st.subheader("Business Context (settings.yaml)")
 st.json(settings_data)
 
