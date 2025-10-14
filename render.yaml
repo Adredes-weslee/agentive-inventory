@@ -42,28 +42,28 @@ services:
       - key: API_TOKEN
         sync: false
 
-  # --- (Optional) n8n on free tier (no disk; state resets on redeploy) ------
-  - type: web
-    name: agentive-n8n
-    runtime: docker
-    image:
-      url: n8nio/n8n:latest
-    healthCheckPath: /
-    dockerCommand: sh -lc 'export N8N_PORT=$PORT; n8n start'
-    envVars:
-      - key: N8N_HOST
-        value: agentive-n8n.onrender.com
-      - key: N8N_PORT
-        value: "10000"
-      - key: WEBHOOK_URL
-        value: https://agentive-n8n.onrender.com/
-      - key: API_URL
-        value: https://agentive-api.onrender.com/api/v1
-      - key: N8N_BASIC_AUTH_ACTIVE
-        value: "true"
-      - key: N8N_BASIC_AUTH_USER
-        sync: false
-      - key: N8N_BASIC_AUTH_PASSWORD
-        sync: false
-      - key: N8N_ENCRYPTION_KEY
-        sync: false
+  # # --- (Optional) n8n on free tier (no disk; state resets on redeploy) ------
+  # - type: web
+  #   name: agentive-n8n
+  #   runtime: docker
+  #   image:
+  #     url: n8nio/n8n:latest
+  #   healthCheckPath: /
+  #   dockerCommand: sh -lc 'export N8N_PORT=$PORT; n8n start'
+  #   envVars:
+  #     - key: N8N_HOST
+  #       value: agentive-n8n.onrender.com
+  #     - key: N8N_PORT
+  #       value: "10000"
+  #     - key: WEBHOOK_URL
+  #       value: https://agentive-n8n.onrender.com/
+  #     - key: API_URL
+  #       value: https://agentive-api.onrender.com/api/v1
+  #     - key: N8N_BASIC_AUTH_ACTIVE
+  #       value: "true"
+  #     - key: N8N_BASIC_AUTH_USER
+  #       sync: false
+  #     - key: N8N_BASIC_AUTH_PASSWORD
+  #       sync: false
+  #     - key: N8N_ENCRYPTION_KEY
+  #       sync: false
