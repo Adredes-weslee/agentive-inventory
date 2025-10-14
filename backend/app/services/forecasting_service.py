@@ -19,14 +19,17 @@ import logging
 import os
 from dataclasses import dataclass
 from datetime import date
+from functools import lru_cache
 from math import sqrt
 from pathlib import Path
 from statistics import NormalDist
-from typing import Iterable, List, Sequence
+from typing import Iterable, List, Optional, Sequence
 
 import joblib
 import numpy as np
 import pandas as pd
+
+from .io_utils import load_row_by_id, load_table
 
 from ..core.config import load_yaml
 from ..models.schemas import ForecastPoint, ForecastResponse
@@ -114,6 +117,36 @@ def compute_pi(
 
 
 # ---------------------------------------------------------------------------
+# Lightweight column helpers
+
+
+_CURRENT_SALES_PATH: Path = Path(os.getenv("DATA_DIR", "data")) / "sales_train_validation.csv"
+
+
+@lru_cache(maxsize=8)
+def _day_columns_for_path(path: Path) -> list[str]:
+    if not path.exists():
+        return []
+    header = pd.read_csv(path, nrows=0)
+    return [col for col in header.columns if col.startswith("d_")]
+
+
+def _set_sales_header_path(path: Path) -> None:
+    global _CURRENT_SALES_PATH
+    _CURRENT_SALES_PATH = path
+
+
+def needed_day_cols(n_recent: int) -> list[str]:
+    base = ["id", "item_id", "dept_id", "cat_id", "store_id", "state_id"]
+    day_cols = _day_columns_for_path(_CURRENT_SALES_PATH)
+    if n_recent <= 0 or not day_cols:
+        return base
+    if n_recent >= len(day_cols):
+        return base + day_cols
+    return base + day_cols[-n_recent:]
+
+
+# ---------------------------------------------------------------------------
 # Result container
 
 
@@ -162,16 +195,16 @@ class ForecastingService:
         config_root: str = "configs",
         moving_average_window: int | None = None,
     ) -> None:
-        self.data_root = data_root
+        env_root = os.getenv("DATA_DIR")
+        self.data_root = data_root if data_root else (env_root or "data")
         self.config_root = config_root
         self.sma_window = int(moving_average_window or self.DEFAULT_SMA_WINDOW)
         if self.sma_window <= 0:
             raise ValueError("moving_average_window must be a positive integer")
 
-        self.sales_df: pd.DataFrame | None = None
-        self.calendar_df: pd.DataFrame | None = None
-        self.sell_prices_df: pd.DataFrame | None = None
-        self.calendar_map: dict[str, pd.Timestamp] | None = None
+        self._calendar_df: pd.DataFrame | None = None
+        self._calendar_map: dict[str, pd.Timestamp] | None = None
+        self._sales_columns: list[str] | None = None
 
         self.service_level: float = 0.95
         self.z_value: float = NormalDist().inv_cdf(self.service_level)
@@ -190,7 +223,7 @@ class ForecastingService:
         # Do NOT pre-load or enumerate models here; keep startup fast.
         # Configuration and data are loaded eagerly (lightweight).
         self._load_configuration()
-        self._load_data()
+        _set_sales_header_path(self._sales_path)
 
     # ------------------------------------------------------------------
     def _load_configuration(self) -> None:
@@ -207,84 +240,190 @@ class ForecastingService:
         self.z_value = NormalDist().inv_cdf(service_level)
 
     # ------------------------------------------------------------------
-    def _load_data(self) -> None:
-        sales_path = os.path.join(self.data_root, "sales_train_validation.csv")
-        calendar_path = os.path.join(self.data_root, "calendar.csv")
-        sell_price_path = os.path.join(self.data_root, "sell_prices.csv")
-
-        if not os.path.exists(sales_path):
-            LOGGER.warning("Sales dataset missing at %s", sales_path)
-        else:
-            self.sales_df = pd.read_csv(sales_path)
-
-        if not os.path.exists(calendar_path):
-            LOGGER.warning("Calendar dataset missing at %s", calendar_path)
-        else:
-            calendar_df = pd.read_csv(calendar_path)
-            calendar_df["date"] = pd.to_datetime(calendar_df["date"], format="%Y-%m-%d")
-            self.calendar_df = calendar_df
-            self.calendar_map = dict(zip(calendar_df["d"], calendar_df["date"]))
-
-        if os.path.exists(sell_price_path):
-            try:
-                sell_prices = pd.read_csv(sell_price_path)
-                sell_prices["wm_yr_wk"] = sell_prices["wm_yr_wk"].astype(int)
-                self.sell_prices_df = sell_prices
-            except Exception:  # pragma: no cover - defensive path
-                LOGGER.exception("Failed to load sell price dataset at %s", sell_price_path)
-
-        if self.sales_df is not None:
-            self._build_abc_cache()
+    @property
+    def _sales_path(self) -> Path:
+        return Path(self.data_root) / "sales_train_validation.csv"
 
     # ------------------------------------------------------------------
-    def _build_abc_cache(self) -> None:
-        assert self.sales_df is not None
+    @property
+    def _calendar_path(self) -> Path:
+        return Path(self.data_root) / "calendar.csv"
 
-        self._abc_cache.clear()
-        self._abc_thresholds = None
+    # ------------------------------------------------------------------
+    @property
+    def _prices_path(self) -> Path:
+        return Path(self.data_root) / "sell_prices.csv"
 
-        demand_cols = [c for c in self.sales_df.columns if c.startswith("d_")]
-        if not demand_cols:
-            return
+    # ------------------------------------------------------------------
+    def _sales_dtype(self, columns: Sequence[str]) -> dict[str, str]:
+        dtype: dict[str, str] = {}
+        string_cols = {"id", "item_id", "dept_id", "cat_id", "store_id", "state_id"}
+        for col in columns:
+            if col in string_cols:
+                dtype[col] = "string"
+            if col.startswith("d_"):
+                dtype[col] = "float32"
+        for col in string_cols:
+            if col not in dtype:
+                dtype[col] = "string"
+        return dtype
 
-        demand_frame = (
-            self.sales_df[demand_cols]
-            .apply(pd.to_numeric, errors="coerce")
-            .fillna(0.0)
+    # ------------------------------------------------------------------
+    def _sales_columns_list(self) -> list[str]:
+        if self._sales_columns is None:
+            path = self._sales_path
+            if not path.exists():
+                self._sales_columns = []
+            else:
+                header = pd.read_csv(path, nrows=0)
+                self._sales_columns = list(header.columns)
+        return self._sales_columns
+
+    # ------------------------------------------------------------------
+    def _load_calendar_frame(self) -> pd.DataFrame:
+        if self._calendar_df is None:
+            path = self._calendar_path
+            if not path.exists():
+                self._calendar_df = pd.DataFrame()
+                return self._calendar_df
+
+            header = pd.read_csv(path, nrows=0)
+            desired = ["d", "date", "event_name_1", "snap_CA", "snap_TX", "snap_WI"]
+            available = [col for col in desired if col in header.columns]
+            usecols = available if available else list(header.columns)
+            dtype = {"d": "string"} if "d" in usecols else None
+            df = load_table(str(path), usecols=usecols, dtype=dtype)
+            if "date" in df.columns:
+                df["date"] = pd.to_datetime(df["date"], errors="coerce")
+            self._calendar_df = df
+        return self._calendar_df
+
+    # ------------------------------------------------------------------
+    def _calendar_mapping(self) -> dict[str, pd.Timestamp]:
+        if self._calendar_map is None:
+            calendar_df = self._load_calendar_frame()
+            if "d" not in calendar_df or "date" not in calendar_df:
+                self._calendar_map = {}
+            else:
+                mapping = {
+                    str(day): pd.to_datetime(date)
+                    for day, date in zip(calendar_df["d"], calendar_df["date"])
+                    if pd.notna(day) and pd.notna(date)
+                }
+                self._calendar_map = mapping
+        return self._calendar_map
+
+    # ------------------------------------------------------------------
+    def _load_sales_row(self, sku_id: str, usecols: Sequence[str]) -> Optional[pd.Series]:
+        columns = list(dict.fromkeys(["id", *usecols]))
+        dtype = self._sales_dtype(columns)
+        row = load_row_by_id(
+            str(self._sales_path),
+            sku_id,
+            id_col="id",
+            usecols=columns,
+            dtype=dtype,
         )
-        averages = demand_frame.mean(axis=1)
-        if averages.empty:
+        if row is not None:
+            return row
+
+        alt_columns = list(dict.fromkeys(["item_id", *usecols]))
+        alt_dtype = self._sales_dtype(alt_columns)
+        return load_row_by_id(
+            str(self._sales_path),
+            sku_id,
+            id_col="item_id",
+            usecols=alt_columns,
+            dtype=alt_dtype,
+        )
+
+    # ------------------------------------------------------------------
+    def _load_sales_frame(self, sku_id: str, columns: Sequence[str]) -> pd.DataFrame:
+        usecols = list(dict.fromkeys(["id", "item_id", *columns]))
+        dtype = self._sales_dtype(usecols)
+        path = self._sales_path
+        parquet_path = path.with_suffix(".parquet")
+
+        if parquet_path.exists():
+            df = load_table(str(path), usecols=usecols, dtype=dtype)
+            mask = pd.Series(False, index=df.index)
+            if "id" in df.columns:
+                mask = mask | (df["id"] == sku_id)
+            if "item_id" in df.columns:
+                mask = mask | (df["item_id"] == sku_id)
+            if not mask.any():
+                return pd.DataFrame(columns=columns)
+            return df.loc[mask, columns]
+
+        if not path.exists():
+            return pd.DataFrame(columns=columns)
+
+        matches: list[pd.DataFrame] = []
+        for chunk in pd.read_csv(
+            path,
+            usecols=usecols,
+            dtype=dtype,
+            chunksize=10_000,
+            memory_map=True,
+        ):
+            mask = pd.Series(False, index=chunk.index)
+            if "id" in chunk.columns:
+                mask = mask | (chunk["id"] == sku_id)
+            if "item_id" in chunk.columns:
+                mask = mask | (chunk["item_id"] == sku_id)
+            if not mask.any():
+                continue
+            matches.append(chunk.loc[mask, columns])
+
+        if matches:
+            return pd.concat(matches, ignore_index=True)
+        return pd.DataFrame(columns=columns)
+
+    def _ensure_abc_thresholds(self) -> None:
+        if self._abc_thresholds is not None:
             return
 
-        q80 = float(averages.quantile(0.8))
-        q50 = float(averages.quantile(0.5))
+        demand_cols = [c for c in self._sales_columns_list() if c.startswith("d_")]
+        path = self._sales_path
+        if not demand_cols or not path.exists():
+            self._abc_thresholds = None
+            return
+
+        usecols = list(dict.fromkeys(["id", *demand_cols]))
+        dtype = self._sales_dtype(usecols)
+        parquet_path = path.with_suffix(".parquet")
+        averages: list[float] = []
+
+        if parquet_path.exists():
+            df = load_table(str(path), usecols=usecols, dtype=dtype)
+            if not df.empty:
+                demand = df[demand_cols].apply(pd.to_numeric, errors="coerce").fillna(0.0)
+                averages = demand.mean(axis=1).tolist()
+        else:
+            for chunk in pd.read_csv(
+                path,
+                usecols=usecols,
+                dtype=dtype,
+                chunksize=10_000,
+                memory_map=True,
+            ):
+                if chunk.empty:
+                    continue
+                demand = chunk[demand_cols].apply(pd.to_numeric, errors="coerce").fillna(0.0)
+                averages.extend(demand.mean(axis=1).tolist())
+
+        if not averages:
+            self._abc_thresholds = None
+            return
+
+        series = pd.Series(averages, dtype=float)
+        q80 = float(series.quantile(0.8))
+        q50 = float(series.quantile(0.5))
         self._abc_thresholds = (q50, q80)
-
-        id_column: str | None = None
-        for candidate in ("id", "item_id"):
-            if candidate in self.sales_df.columns:
-                id_column = candidate
-                break
-
-        if id_column is not None:
-            for sku, avg in zip(self.sales_df[id_column], averages):
-                cls = self._class_from_average(float(avg))
-                if cls:
-                    self._abc_cache[str(sku)] = cls
-
-        if "item_id" in self.sales_df.columns:
-            grouped_totals = (
-                demand_frame.assign(item_id=self.sales_df["item_id"])
-                .groupby("item_id")
-                .sum()
-            )
-            for item_id, avg in grouped_totals.mean(axis=1).items():
-                cls = self._class_from_average(float(avg))
-                if cls:
-                    self._abc_cache[str(item_id)] = cls
 
     # ------------------------------------------------------------------
     def _class_from_average(self, average: float | None) -> str | None:
+        self._ensure_abc_thresholds()
         thresholds = self._abc_thresholds
         if thresholds is None or average is None or np.isnan(average):
             return None
@@ -298,21 +437,11 @@ class ForecastingService:
 
     # ------------------------------------------------------------------
     def _average_demand_for_sku(self, sku_id: str) -> float | None:
-        if self.sales_df is None:
-            return None
-
-        demand_cols = [c for c in self.sales_df.columns if c.startswith("d_")]
+        demand_cols = [c for c in self._sales_columns_list() if c.startswith("d_")]
         if not demand_cols:
             return None
 
-        sku_rows = pd.DataFrame()
-        if "id" in self.sales_df.columns:
-            sku_rows = self.sales_df[self.sales_df["id"] == sku_id]
-            if sku_rows.empty and "item_id" in self.sales_df.columns:
-                sku_rows = self.sales_df[self.sales_df["item_id"] == sku_id]
-        elif "item_id" in self.sales_df.columns:
-            sku_rows = self.sales_df[self.sales_df["item_id"] == sku_id]
-
+        sku_rows = self._load_sales_frame(sku_id, demand_cols)
         if sku_rows.empty:
             return None
 
@@ -353,27 +482,30 @@ class ForecastingService:
 
     # ------------------------------------------------------------------
     def _ensure_loaded(self) -> None:
-        if self.sales_df is None or self.calendar_df is None or self.calendar_map is None:
+        if not self._sales_path.exists() or not self._calendar_path.exists():
             raise FileNotFoundError(
                 "M5 dataset files were not found. Expected sales_train_validation.csv and calendar.csv under the data/ directory."
             )
+        self._load_calendar_frame()
+        if not self._calendar_mapping():
+            raise FileNotFoundError(
+                "Calendar dataset is missing required columns."
+            )
 
     # ------------------------------------------------------------------
-    def _resolve_sku(self, sku_id: str) -> pd.Series:
-        assert self.sales_df is not None
-        if "id" in self.sales_df.columns:
-            sku_rows = self.sales_df[self.sales_df["id"] == sku_id]
-            if sku_rows.empty and "item_id" in self.sales_df.columns:
-                sku_rows = self.sales_df[self.sales_df["item_id"] == sku_id]
+    def _resolve_sku(self, sku_id: str, n_recent: Optional[int] = None) -> pd.Series:
+        if n_recent is not None:
+            columns = needed_day_cols(n_recent)
+            demand_cols = [col for col in columns if col.startswith("d_")]
         else:
-            sku_rows = self.sales_df[self.sales_df["item_id"] == sku_id]
+            demand_cols = [col for col in self._sales_columns_list() if col.startswith("d_")]
 
-        if sku_rows.empty:
-            raise ValueError("SKU not found")
-
-        demand_cols = [col for col in sku_rows.columns if col.startswith("d_")]
         if not demand_cols:
             raise ValueError(f"No demand history found for SKU '{sku_id}'")
+
+        sku_rows = self._load_sales_frame(sku_id, demand_cols)
+        if sku_rows.empty:
+            raise ValueError("SKU not found")
 
         demand_history = sku_rows[demand_cols].apply(pd.to_numeric, errors="coerce").fillna(0.0)
         if len(sku_rows) > 1:
@@ -386,8 +518,8 @@ class ForecastingService:
         return sku_series.ffill().fillna(0.0)
 
     # ------------------------------------------------------------------
-    def _sku_history(self, sku_id: str) -> _SkuHistory:
-        series = self._resolve_sku(sku_id)
+    def _sku_history(self, sku_id: str, n_recent: Optional[int] = None) -> _SkuHistory:
+        series = self._resolve_sku(sku_id, n_recent=n_recent)
         dates = self._map_days_to_dates(series.index)
         history = pd.Series(series.values, index=pd.DatetimeIndex(dates, name="date"))
         history.name = series.name
@@ -403,9 +535,11 @@ class ForecastingService:
 
     # ------------------------------------------------------------------
     def _map_days_to_dates(self, days: Sequence[str]) -> List[pd.Timestamp]:
-        assert self.calendar_map is not None
+        mapping = self._calendar_mapping()
+        if not mapping:
+            raise ValueError("Calendar mapping is unavailable")
         try:
-            return [self.calendar_map[d] for d in days]
+            return [mapping[d] for d in days]
         except KeyError as exc:  # pragma: no cover - defensive branch
             raise ValueError(f"Calendar is missing entries for day '{exc.args[0]}'") from exc
 
@@ -428,8 +562,9 @@ class ForecastingService:
 
     # ------------------------------------------------------------------
     def _future_dates(self, last_day: str, horizon_days: int) -> List[date]:
-        assert self.calendar_df is not None
-        calendar_df = self.calendar_df
+        calendar_df = self._load_calendar_frame()
+        if "d" not in calendar_df or "date" not in calendar_df:
+            raise ValueError("Calendar dataset missing required columns")
         try:
             last_idx = calendar_df.index[calendar_df["d"] == last_day][0]
         except IndexError as exc:
@@ -467,8 +602,9 @@ class ForecastingService:
         df["weekofyear"] = index.isocalendar().week.astype(int)
         df["is_weekend"] = (index.dayofweek >= 5).astype(int)
 
-        if self.calendar_df is not None:
-            calendar_indexed = self.calendar_df.set_index("date")
+        calendar_df = self._load_calendar_frame()
+        if not calendar_df.empty:
+            calendar_indexed = calendar_df.set_index("date")
             calendar_slice = calendar_indexed.reindex(index)
             if "event_name_1" in calendar_slice:
                 df["has_event"] = (~calendar_slice["event_name_1"].isna()).astype(int)
@@ -718,8 +854,10 @@ class ForecastingService:
 
         self._ensure_loaded()
 
+        required_history = max(window + horizon + step, self.sma_window + horizon)
+
         try:
-            sku_history = self._sku_history(sku_id)
+            sku_history = self._sku_history(sku_id, n_recent=required_history)
         except ValueError as exc:
             raise FileNotFoundError("M5 datasets appear to be missing required columns or entries.") from exc
 
@@ -827,7 +965,8 @@ class ForecastingService:
             raise ValueError("horizon_days must be a positive integer")
 
         self._ensure_loaded()
-        sku_history = self._sku_history(sku_id)
+        required_history = max(self.sma_window + horizon_days, max(self.XGB_LAGS) * 2 + horizon_days)
+        sku_history = self._sku_history(sku_id, n_recent=required_history)
         history = sku_history.series
 
         if history.isna().any():

@@ -8,6 +8,7 @@ import logging
 import math
 import os
 from numbers import Real
+from pathlib import Path
 from typing import Dict, Iterable, List, Optional
 
 import yaml
@@ -58,7 +59,8 @@ def _validate_sku(sku_id: str) -> None:
     """Ensure the SKU exists before processing recommendations."""
 
     has_sku = getattr(_inventory_service, "has_sku", _inventory_service.sku_exists)
-    if getattr(_inventory_service, "sales_df", None) is None:
+    sales_path = Path(_inventory_service.data_root) / "sales_train_validation.csv"
+    if not sales_path.exists() and not sales_path.with_suffix(".parquet").exists():
         LOGGER.error(
             "Inventory datasets missing while validating procurement request for sku_id=%s",
             sku_id,
