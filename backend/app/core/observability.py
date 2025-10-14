@@ -217,6 +217,39 @@ class TokenAndRateLimitMiddleware(BaseHTTPMiddleware):
             if sku_value is not None:
                 sku_id = str(sku_value)
 
+        # Optionally parse JSON body for POST/PUT/PATCH on known routes to enrich logs
+        # NOTE: reading the body consumes it; we reconstruct the Request with a
+        # custom `receive` so downstream still gets the original payload.
+        if request.method in {"POST", "PUT", "PATCH"} and (
+            path.startswith("/api/v1/procure") or path.startswith("/api/v1/approvals")
+        ):
+            try:
+                body_bytes = await request.body()
+            except Exception:
+                body_bytes = b""
+
+            if body_bytes:
+                try:
+                    data = json.loads(body_bytes.decode("utf-8"))
+                    if isinstance(data, dict):
+                        if not sku_id and isinstance(data.get("sku_id"), (str, int)):
+                            sku_id = str(data["sku_id"])
+                        elif (
+                            not sku_id
+                            and isinstance(data.get("sku_ids"), list)
+                            and data["sku_ids"]
+                        ):
+                            sku_id = str(data["sku_ids"][0])
+                except Exception:
+                    # Non-JSON body; ignore
+                    pass
+
+                # Replay body to downstream app (since we consumed it)
+                async def receive() -> dict:
+                    return {"type": "http.request", "body": body_bytes, "more_body": False}
+
+                request = Request(request.scope, receive)
+
         model_used_header = (
             request.headers.get("model_used")
             or request.headers.get("x-model-used")
