@@ -12,6 +12,7 @@ sqlmodel==0.0.27
 pyyaml==6.0.3
 requests==2.32.5
 plotly==6.3.1
+httpx==0.28.1
 
 # --- Optional LLM support (Gemini) ---
 google-generativeai==0.8.5
