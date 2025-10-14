@@ -1,4 +1,5 @@
-# infra/render.yaml
+# render.yaml
+
 services:
   # --- FastAPI backend (no disk; symlink to repo-root data/configs) ---------
   - type: web
@@ -7,7 +8,7 @@ services:
     rootDir: backend
     buildCommand: |
       pip install --no-cache-dir -r requirements.txt
-      # point backend/data -> ../data (repo root), same for configs
+      # expose repo-root data/ & configs/ to code expecting backend-local paths
       ln -sfn ../data data || true
       ln -sfn ../configs configs || true
     startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
@@ -15,10 +16,9 @@ services:
     envVars:
       - key: LOG_LEVEL
         value: info
-      # Optional CORS: lock to your UI origin after the first UI deploy
+      # Lock CORS to your UI after first deploy if desired:
       # - key: CORS_ORIGINS
       #   value: https://agentive-ui.onrender.com
-      # Optional features (leave empty to disable):
       - key: GEMINI_API_KEY
         sync: false
       - key: GEMINI_MODEL
@@ -42,13 +42,11 @@ services:
       - key: API_TOKEN
         sync: false
 
-  # --- (Optional) n8n on free tier (no disk; state will reset on deploy) ----
+  # --- (Optional) n8n on free tier (no disk; state resets on redeploy) ------
   - type: web
     name: agentive-n8n
     runtime: docker
-    image:
-      url: n8nio/n8n:latest
-    plan: free
+    image: n8nio/n8n:latest
     healthCheckPath: /
     dockerCommand: sh -lc 'export N8N_PORT=$PORT; n8n start'
     envVars:
@@ -60,14 +58,11 @@ services:
         value: https://agentive-n8n.onrender.com/
       - key: API_URL
         value: https://agentive-api.onrender.com/api/v1
-      # Protect the UI (recommended)
       - key: N8N_BASIC_AUTH_ACTIVE
         value: "true"
       - key: N8N_BASIC_AUTH_USER
         sync: false
       - key: N8N_BASIC_AUTH_PASSWORD
         sync: false
-      # Encryption key for creds (set in dashboard)
       - key: N8N_ENCRYPTION_KEY
         sync: false
-
