@@ -3,11 +3,40 @@ from __future__ import annotations
 import os
 from functools import lru_cache
 from pathlib import Path
-from typing import Optional, Sequence
+from typing import Optional, Sequence, Union
 
 import pandas as pd
 
 DATA_DIR = Path(os.getenv("DATA_DIR", "data")).resolve()
+
+
+def _resolve_data_path(filename: Union[str, os.PathLike[str]]) -> Path:
+    """Return the absolute path for a dataset file.
+
+    The helpers in this module historically accepted relative paths under the
+    ``DATA_DIR`` root. During the refactor we started forwarding fully qualified
+    paths (and occasionally ``data/``-prefixed relatives). To remain backwards
+    compatible and avoid accidentally creating ``data/data`` style paths, this
+    resolver detects a few common cases before falling back to ``DATA_DIR``.
+    """
+
+    path = Path(filename)
+
+    if path.is_absolute():
+        return path
+
+    # Prefer an existing file that was passed in relative form (e.g. "data/foo.csv").
+    parquet_candidate = path.with_suffix(".parquet")
+    if path.exists() or parquet_candidate.exists():
+        return path
+
+    # Otherwise assume the value is relative to DATA_DIR.
+    candidate = DATA_DIR / path
+    parquet_under_root = candidate.with_suffix(".parquet")
+    if candidate.exists() or parquet_under_root.exists():
+        return candidate
+
+    return candidate
 
 
 def _prefer_parquet(csv_path: Path) -> Path:
@@ -20,7 +49,7 @@ def load_table(
     usecols: Optional[Sequence[str]] = None,
     dtype: Optional[dict] = None,
 ) -> pd.DataFrame:
-    path = _prefer_parquet(DATA_DIR / filename)
+    path = _prefer_parquet(_resolve_data_path(filename))
     if path.suffix == ".parquet":
         return pd.read_parquet(path, columns=usecols)
     return pd.read_csv(path, usecols=usecols, dtype=dtype, memory_map=True)
@@ -34,7 +63,7 @@ def load_row_by_id(
     dtype: Optional[dict] = None,
     chunksize: int = 50_000,
 ) -> Optional[pd.Series]:
-    path = _prefer_parquet(DATA_DIR / filename)
+    path = _prefer_parquet(_resolve_data_path(filename))
     if path.suffix == ".parquet":
         import pyarrow.dataset as ds  # type: ignore[import-not-found]
 

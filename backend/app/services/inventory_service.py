@@ -125,11 +125,21 @@ class InventoryService:
     def _sales_columns_list(self) -> list[str]:
         if self._sales_columns is None:
             sales_path = self._data_path("sales_train_validation.csv")
-            if not sales_path.exists():
-                self._sales_columns = []
-            else:
+            parquet_path = sales_path.with_suffix(".parquet")
+            if sales_path.exists():
                 header = pd.read_csv(sales_path, nrows=0)
                 self._sales_columns = list(header.columns)
+            elif parquet_path.exists():
+                try:
+                    import pyarrow.parquet as pq  # type: ignore[import-not-found]
+
+                    schema = pq.read_schema(parquet_path)
+                    self._sales_columns = list(schema.names)
+                except Exception:  # pragma: no cover - fallback for narrow installs
+                    df = pd.read_parquet(parquet_path, columns=None)
+                    self._sales_columns = list(df.columns)
+            else:
+                self._sales_columns = []
         return self._sales_columns
 
     # ------------------------------------------------------------------
