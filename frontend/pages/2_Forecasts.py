@@ -10,18 +10,18 @@ import pandas as pd
 import requests
 import streamlit as st
 
-from ..utils.api import get_headers
+from utils.api import get_api_token, get_headers
 
 API_URL = os.getenv("API_URL", "http://localhost:8000/api/v1")
 
 
 @st.cache_data(ttl=300)
-def _get_catalog_ids(limit: int = 20) -> List[str]:
+def _get_catalog_ids(limit: int = 20, api_token: str = "") -> List[str]:
     try:
         response = requests.get(
             f"{API_URL}/catalog/ids",
             params={"limit": limit},
-            headers=get_headers(),
+            headers=get_headers(api_token),
             timeout=15,
         )
         response.raise_for_status()
@@ -31,11 +31,11 @@ def _get_catalog_ids(limit: int = 20) -> List[str]:
 
 
 @st.cache_data(ttl=300)
-def _fetch_forecast(sku: str, horizon: int) -> Dict[str, Any]:
+def _fetch_forecast(sku: str, horizon: int, api_token: str = "") -> Dict[str, Any]:
     response = requests.get(
         f"{API_URL}/forecasts/{sku}",
         params={"horizon_days": horizon},
-        headers=get_headers(),
+        headers=get_headers(api_token),
         timeout=30,
     )
     response.raise_for_status()
@@ -45,7 +45,7 @@ def _fetch_forecast(sku: str, horizon: int) -> Dict[str, Any]:
 st.title("🔮 Forecasts")
 st.caption("Visualise deterministic forecasts generated from the Walmart M5 dataset.")
 
-examples = _get_catalog_ids(limit=20)
+examples = _get_catalog_ids(limit=20, api_token=get_api_token())
 with st.form(key="forecast_form"):
     sku = (
         st.selectbox(
@@ -73,9 +73,10 @@ with st.form(key="forecast_form"):
     submitted = st.form_submit_button("Get forecast")
 
 if submitted:
+    api_token = get_api_token()
     try:
         with st.spinner("Fetching forecast from API…"):
-            payload = _fetch_forecast(sku, int(horizon))
+            payload = _fetch_forecast(sku, int(horizon), api_token=api_token)
     except requests.Timeout:
         st.error("The forecast request timed out. Please try again or adjust the horizon.")
     except requests.HTTPError as exc:
