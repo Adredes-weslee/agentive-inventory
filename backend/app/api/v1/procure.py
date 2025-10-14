@@ -240,7 +240,18 @@ async def explain(body: ExplanationRequest) -> dict[str, str]:
         "Procurement explanation request received for sku_id=%s horizon=%s", body.sku_id, body.horizon_days
     )
 
-    if not os.getenv("GEMINI_API_KEY"):
+    # By default we keep returning 404 if the feature is disabled (matches tests).
+    # If EXPLAIN_FALLBACK_WHEN_DISABLED=true, we continue and return a 200 with
+    # the llm_service fallback text instead.
+    def _env_truthy(name: str, default: bool = False) -> bool:
+        raw = os.getenv(name)
+        if raw is None:
+            return default
+        return str(raw).strip().lower() in {"1", "true", "yes", "on"}
+
+    explain_fallback_enabled = _env_truthy("EXPLAIN_FALLBACK_WHEN_DISABLED", default=False)
+    gemini_key_missing = not os.getenv("GEMINI_API_KEY")
+    if gemini_key_missing and not explain_fallback_enabled:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=_error_payload("feature_disabled", "Explanation service is disabled."),
@@ -285,6 +296,8 @@ async def explain(body: ExplanationRequest) -> dict[str, str]:
         ) from exc
 
     explanation_text = (explanation or "").strip() or (
+        # If we got here with no GEMINI key, llm_service will have produced a heuristic string.
+        # If that still ends up empty for any reason, provide a deterministic fallback.
         "Automated explanation was empty; please review the numeric rationale."
     )
     return {"explanation": explanation_text}

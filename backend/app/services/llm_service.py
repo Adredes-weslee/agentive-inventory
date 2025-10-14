@@ -70,8 +70,9 @@ def explain_recommendation(
     ]
 
     try:
+        model_name = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
         response = client.responses.generate(  # type: ignore[attr-defined]
-            model="gemini-2.5-flash",
+            model=model_name,
             contents=prompt,
         )
         return getattr(response, "output_text", None) or str(response)
