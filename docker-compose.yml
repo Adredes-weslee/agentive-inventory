@@ -1,7 +1,5 @@
 # docker-compose.yml
 
-version: "3.8"
-
 services:
   backend:
     build:
@@ -25,7 +23,7 @@ services:
       - GEMINI_API_KEY=${GEMINI_API_KEY:-}
       - GEMINI_MODEL=${GEMINI_MODEL:-gemini-2.5-flash}
     volumes:
-      - ./data:/app/data:ro
+      - ./data:/app/data
       - ./configs:/app/configs
     ports:
       - "8000:8000"
