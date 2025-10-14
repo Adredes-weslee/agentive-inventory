@@ -165,15 +165,15 @@ except ImportError:  # pragma: no cover - fallback implementation
         payload_lines = [metric.render() for metric in _METRIC_REGISTRY]
         return ("\n".join(payload_lines) + "\n").encode("utf-8")
 
-    Counter = _FallbackCounter  # type: ignore[misc]
-    Histogram = _FallbackHistogram  # type: ignore[misc]
+    Counter = _FallbackCounter 
+    Histogram = _FallbackHistogram
 
     # ---- Typing/IDE friendliness -----------------------------------------
     # Inner class annotations sometimes referenced the private fallback
     # names. Re-alias them to the public classes so that editors and static
     # analyzers resolve the types cleanly without changing runtime behavior.
-    _FallbackCounter = Counter
-    _FallbackHistogram = Histogram
+    _FallbackCounter = Counter  # type: ignore[misc]
+    _FallbackHistogram = Histogram  # type: ignore[misc]
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import PlainTextResponse, Response
