@@ -7,12 +7,23 @@ services:
     build:
       context: ./backend
     container_name: agentive-backend
+    # Pass values from .env into the container (Compose will also use .env for ${VAR} substitution)
+    env_file:
+      - ./.env
     environment:
-      - API_HOST=0.0.0.0
-      - API_PORT=8000
+      # Defaults keep local dev working even if .env is missing
+      - API_HOST=${API_HOST:-0.0.0.0}
+      - API_PORT=${API_PORT:-8000}
+      - LOG_LEVEL=${LOG_LEVEL:-info}
       - DATA_DIR=/app/data
       - CONFIG_DIR=/app/configs
+      - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:8501}
+      # Security / rate limiting
+      - API_TOKEN=${API_TOKEN:-}
+      - RATE_LIMIT_PER_MIN=${RATE_LIMIT_PER_MIN:-60}
+      # LLM (optional): empty key keeps the explanation endpoint disabled (404 by design)
       - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - GEMINI_MODEL=${GEMINI_MODEL:-gemini-2.5-flash}
     volumes:
       - ./data:/app/data:ro
       - ./configs:/app/configs:ro
@@ -25,12 +36,16 @@ services:
       retries: 10
     command: >
       uvicorn app.main:app --host 0.0.0.0 --port 8000
+    restart: unless-stopped
     networks: [appnet]
 
   frontend:
     build:
       context: ./frontend
     container_name: agentive-frontend
+    # The UI should always talk to the API by service name inside the Compose network
+    env_file:
+      - ./.env
     environment:
       - API_URL=http://backend:8000/api/v1
     depends_on:
@@ -40,21 +55,35 @@ services:
       - "8501:8501"
     command: >
       streamlit run app.py --server.port 8501 --server.address 0.0.0.0
+    restart: unless-stopped
     networks: [appnet]
 
   n8n:
     image: n8nio/n8n:latest
     container_name: agentive-n8n
+    env_file:
+      - ./.env
     environment:
-      - N8N_HOST=localhost
-      - N8N_PORT=5678
-      - TZ=UTC
-      - API_URL=http://backend:8000/api/v1
+      - N8N_HOST=${N8N_HOST:-localhost}
+      - N8N_PORT=${N8N_PORT:-5678}
+      - TZ=${TZ:-UTC}
+      # n8n nodes that call your API should use the internal service URL
+      - API_URL=${N8N_API_URL:-http://backend:8000/api/v1}
+      - N8N_EDITOR_BASE_URL=${N8N_EDITOR_BASE_URL:-}
+      - N8N_ENCRYPTION_KEY=${N8N_ENCRYPTION_KEY:-}
+      - N8N_BASIC_AUTH_ACTIVE=${N8N_BASIC_AUTH_ACTIVE:-}
+      - N8N_BASIC_AUTH_USER=${N8N_BASIC_AUTH_USER:-}
+      - N8N_BASIC_AUTH_PASSWORD=${N8N_BASIC_AUTH_PASSWORD:-}
+      - N8N_DIAGNOSTICS_ENABLED=${N8N_DIAGNOSTICS_ENABLED:-false}
+      - N8N_PERSONALIZATION_ENABLED=${N8N_PERSONALIZATION_ENABLED:-false}
+      - N8N_VERSION_NOTIFICATIONS_ENABLED=${N8N_VERSION_NOTIFICATIONS_ENABLED:-false}
+      - N8N_HIRING_BANNER_ENABLED=${N8N_HIRING_BANNER_ENABLED:-false}
     ports:
       - "5678:5678"
     depends_on:
       backend:
         condition: service_healthy
+    restart: unless-stopped
     networks: [appnet]
 
 networks:
