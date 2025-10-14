@@ -22,6 +22,6 @@ dependencies:
   - mypy
   - ruff
   - pip:
-      - google-genai>=0.3
+      - google-generativeai
       - prophet>=1.1.5
       - plotly
