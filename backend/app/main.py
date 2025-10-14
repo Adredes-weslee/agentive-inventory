@@ -13,7 +13,24 @@ import os
 from fastapi import FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
+import os, logging
+from pathlib import Path
 
+
+# Load .env from repo root
+try:
+    from dotenv import load_dotenv  # pip install python-dotenv
+    BASE_DIR = Path(__file__).resolve().parents[2]  # repo root
+    load_dotenv(BASE_DIR / ".env")
+except Exception:
+    pass
+
+
+logging.getLogger(__name__).info(
+    "LLM enabled: %s model=%s",
+    bool(os.getenv("GEMINI_API_KEY")),
+    os.getenv("GEMINI_MODEL", "gemini-2.5-flash"),
+)
 from .api.v1 import (
     approvals,
     backtest,
