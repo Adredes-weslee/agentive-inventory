@@ -55,8 +55,8 @@ def _stubbed_read_csv(path, *args, **kwargs):
 
 pd.read_csv = _stubbed_read_csv  # type: ignore[assignment]
 
-from backend.app.main import app
-from backend.app.models import schemas
+from backend.app.main import app  # noqa: E402
+from backend.app.models import schemas  # noqa: E402
 
 
 def _known_sku_id() -> str:

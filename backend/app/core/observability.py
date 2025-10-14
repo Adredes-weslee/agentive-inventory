@@ -24,8 +24,6 @@ try:  # pragma: no cover - exercised indirectly in environments with the package
 except ImportError:  # pragma: no cover - fallback implementation
     CONTENT_TYPE_LATEST = "text/plain; version=0.0.4; charset=utf-8"
 
-    _METRIC_REGISTRY: list["_BaseMetric"] = []
-
     class _BaseMetric:
         def __init__(self, name: str, documentation: str, labelnames: list[str] | tuple[str, ...]):
             self._name = name
@@ -46,13 +44,15 @@ except ImportError:  # pragma: no cover - fallback implementation
         def render(self) -> str:
             raise NotImplementedError
 
-    class Counter(_BaseMetric):
+    _METRIC_REGISTRY: list[_BaseMetric] = []
+
+    class _FallbackCounter(_BaseMetric):
         def __init__(self, name: str, documentation: str, labelnames: list[str] | tuple[str, ...]):
             super().__init__(name, documentation, labelnames)
             self._values: defaultdict[tuple[str, ...], float] = defaultdict(float)
 
         class _CounterChild:
-            def __init__(self, parent: "Counter", key: tuple[str, ...]):
+            def __init__(self, parent: "_FallbackCounter", key: tuple[str, ...]):
                 self._parent = parent
                 self._key = key
 
@@ -62,10 +62,10 @@ except ImportError:  # pragma: no cover - fallback implementation
                 with self._parent._lock:
                     self._parent._values[self._key] += amount
 
-        def labels(self, *labelvalues: str) -> "Counter._CounterChild":
+        def labels(self, *labelvalues: str) -> "_FallbackCounter._CounterChild":
             if len(labelvalues) != len(self._labelnames):
                 raise ValueError("Incorrect number of labels provided")
-            return Counter._CounterChild(self, tuple(labelvalues))
+            return _FallbackCounter._CounterChild(self, tuple(labelvalues))
 
         def render(self) -> str:
             lines = [
@@ -78,7 +78,7 @@ except ImportError:  # pragma: no cover - fallback implementation
                     lines.append(f"{self._name}{label_str} {value}")
             return "\n".join(lines)
 
-    class Histogram(_BaseMetric):
+    class _FallbackHistogram(_BaseMetric):
         _DEFAULT_BUCKETS = (
             0.005,
             0.01,
@@ -115,7 +115,7 @@ except ImportError:  # pragma: no cover - fallback implementation
             self._counts: defaultdict[tuple[str, ...], int] = defaultdict(int)
 
         class _HistogramChild:
-            def __init__(self, parent: "Histogram", key: tuple[str, ...]):
+            def __init__(self, parent: "_FallbackHistogram", key: tuple[str, ...]):
                 self._parent = parent
                 self._key = key
 
@@ -130,10 +130,10 @@ except ImportError:  # pragma: no cover - fallback implementation
                     self._parent._sums[self._key] += amount
                     self._parent._counts[self._key] += 1
 
-        def labels(self, *labelvalues: str) -> "Histogram._HistogramChild":
+        def labels(self, *labelvalues: str) -> "_FallbackHistogram._HistogramChild":
             if len(labelvalues) != len(self._labelnames):
                 raise ValueError("Incorrect number of labels provided")
-            return Histogram._HistogramChild(self, tuple(labelvalues))
+            return _FallbackHistogram._HistogramChild(self, tuple(labelvalues))
 
         def render(self) -> str:
             lines = [
@@ -164,6 +164,9 @@ except ImportError:  # pragma: no cover - fallback implementation
     def generate_latest() -> bytes:
         payload_lines = [metric.render() for metric in _METRIC_REGISTRY]
         return ("\n".join(payload_lines) + "\n").encode("utf-8")
+
+    Counter = _FallbackCounter
+    Histogram = _FallbackHistogram
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import PlainTextResponse, Response
@@ -260,8 +263,8 @@ class TokenAndRateLimitMiddleware(BaseHTTPMiddleware):
         if self._token and not path.startswith(self._exempt_prefixes):
             auth_header = request.headers.get("authorization", "")
             if auth_header != f"Bearer {self._token}":
-                response = PlainTextResponse("Unauthorized", status_code=401)
-                return _finalize(response)
+                error_response = PlainTextResponse("Unauthorized", status_code=401)
+                return _finalize(error_response)
 
         # Rate limiting per client IP
         if self._per_minute > 0:
@@ -271,8 +274,8 @@ class TokenAndRateLimitMiddleware(BaseHTTPMiddleware):
                 while window and now - window[0] > 60.0:
                     window.popleft()
                 if len(window) >= self._per_minute:
-                    response = PlainTextResponse("Too Many Requests", status_code=429)
-                    return _finalize(response)
+                    error_response = PlainTextResponse("Too Many Requests", status_code=429)
+                    return _finalize(error_response)
                 window.append(now)
 
         response: Response

@@ -6,7 +6,11 @@ from importlib import import_module
 from typing import Any
 
 __all__ = [
+    "approvals",
+    "backtest",
+    "catalog",
     "configs",
+    "data",
     "forecasts",
     "health",
     "procure",

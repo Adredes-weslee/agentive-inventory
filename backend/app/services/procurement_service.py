@@ -27,20 +27,19 @@ def z_for_service_level(service_level: float) -> float:
         level = 0.95
     level = max(0.5, min(level, 0.999))
 
-    try:  # Prefer numerical inverse if available
-        from math import erfcinv, sqrt
+    erfcinv = getattr(math, "erfcinv", None)
+    if callable(erfcinv):
+        return math.sqrt(2.0) * float(erfcinv(2.0 * (1.0 - level)))
 
-        return sqrt(2.0) * erfcinv(2.0 * (1.0 - level))
-    except Exception:  # pragma: no cover - fallback for limited interpreters
-        lookup = {
-            0.90: 1.2816,
-            0.95: 1.6449,
-            0.97: 1.8808,
-            0.98: 2.0537,
-            0.99: 2.3263,
-        }
-        closest = min(lookup.keys(), key=lambda x: abs(x - level))
-        return lookup[closest]
+    lookup: dict[float, float] = {
+        0.90: 1.2816,
+        0.95: 1.6449,
+        0.97: 1.8808,
+        0.98: 2.0537,
+        0.99: 2.3263,
+    }
+    closest = min(lookup.keys(), key=lambda x: abs(x - level))
+    return lookup[closest]
 
 
 def calculate_daily_stats(points: Iterable[Tuple[float, float]]) -> Tuple[float, float]:

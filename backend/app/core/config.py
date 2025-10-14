@@ -20,16 +20,14 @@ except ModuleNotFoundError:  # pragma: no cover
     try:
         from pydantic import BaseSettings  # type: ignore
     except Exception:  # pragma: no cover
-        class BaseSettings:  # type: ignore[override]
-            """Fallback BaseSettings implementation for tests.
-
-            The minimal implementation stores provided keyword arguments as
-            attributes and ignores environment variable loading.
-            """
+        class _BaseSettingsFallback:
+            """Fallback BaseSettings implementation for tests."""
 
             def __init__(self, **data: object) -> None:
                 for key, value in data.items():
                     setattr(self, key, value)
+
+        BaseSettings = _BaseSettingsFallback  # type: ignore[misc]
 
 
 class Settings(BaseSettings):

@@ -7,6 +7,7 @@ from __future__ import annotations
 import logging
 import math
 import os
+from numbers import Real
 from typing import Dict, Iterable, List, Optional
 
 import yaml
@@ -326,16 +327,18 @@ async def batch_recommendations(body: BatchRequest) -> BatchRecommendationRespon
     if budget is None:
         for rec in raw_recommendations:
             rec["selected"] = True
-        total_spend_selected = sum(float(rec["total_spend"]) for rec in raw_recommendations)
+        total_spend_selected = sum(
+            _coerce_float(rec.get("total_spend", 0.0)) for rec in raw_recommendations
+        )
     else:
         ranked = sorted(
             raw_recommendations,
-            key=lambda rec: float(rec.get("gmroi_delta", 0.0)),
+            key=lambda rec: _coerce_float(rec.get("gmroi_delta", 0.0)),
             reverse=True,
         )
         running_spend = 0.0
         for rec in ranked:
-            spend = max(float(rec.get("total_spend", 0.0)), 0.0)
+            spend = max(_coerce_float(rec.get("total_spend", 0.0)), 0.0)
             if spend <= 0:
                 rec["selected"] = True
                 continue
@@ -346,7 +349,9 @@ async def batch_recommendations(body: BatchRequest) -> BatchRecommendationRespon
                 rec["selected"] = False
                 rec["requires_approval"] = True
         total_spend_selected = sum(
-            float(rec["total_spend"]) for rec in raw_recommendations if rec["selected"]
+            _coerce_float(rec.get("total_spend", 0.0))
+            for rec in raw_recommendations
+            if bool(rec.get("selected"))
         )
 
     response_recommendations = [BatchRecommendation.model_validate(rec) for rec in raw_recommendations]
@@ -354,3 +359,12 @@ async def batch_recommendations(body: BatchRequest) -> BatchRecommendationRespon
         recommendations=response_recommendations,
         total_spend_selected=total_spend_selected,
     )
+def _coerce_float(value: object, default: float = 0.0) -> float:
+    if isinstance(value, Real):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return float(value)
+        except ValueError:
+            return default
+    return default

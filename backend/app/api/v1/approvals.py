@@ -8,7 +8,7 @@ import json
 import os
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Literal
 
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, Field, field_validator
@@ -22,14 +22,14 @@ LOG_PATH = os.path.join(DATA_DIR, "approvals_audit_log.jsonl")
 
 class ApprovalRequest(BaseModel):
     sku_id: str = Field(..., min_length=1)
-    action: str = Field(..., min_length=1)
-    qty: int = Field(..., ge=0)
-    reason: str = Field(..., min_length=1)
+    action: Literal["approve", "reject"]
+    qty: int | None = Field(None, ge=0)
+    reason: str | None = Field(None, min_length=1)
 
-    @field_validator("action")
+    @field_validator("action", mode="before")
     @classmethod
     def _normalise_action(cls, value: str) -> str:
-        return value.lower()
+        return (value or "").lower()
 
 
 def _ensure_storage(path: Path) -> None:
@@ -67,13 +67,15 @@ def _read_events(limit: int) -> List[Dict[str, Any]]:
 def create_approval(request: ApprovalRequest) -> Dict[str, Any]:
     """Record an approval decision and append it to the audit log."""
 
-    event = {
+    event: Dict[str, Any] = {
         "sku_id": request.sku_id,
         "action": request.action,
-        "qty": int(request.qty),
-        "reason": request.reason,
         "recorded_at": datetime.utcnow().isoformat() + "Z",
     }
+    if request.qty is not None:
+        event["qty"] = int(request.qty)
+    if request.reason is not None:
+        event["reason"] = request.reason
     _write_event(event)
     return {"status": "ok", "event": event}
 
