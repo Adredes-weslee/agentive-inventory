@@ -11,5 +11,10 @@ scikit-learn>=1.3
 sqlmodel>=0.0.8
 pyyaml>=6.0
 requests>=2.31
-google-generativeai>=0.3
 plotly
+
+# --- Optional LLM support (Gemini) ---
+# Preferred SDK:
+google-generativeai>=0.7.2
+# If your environment already uses the older beta package, you can install instead:
+# google-genai>=0.3.0
