@@ -26,7 +26,7 @@ services:
       - GEMINI_MODEL=${GEMINI_MODEL:-gemini-2.5-flash}
     volumes:
       - ./data:/app/data:ro
-      - ./configs:/app/configs:ro
+      - ./configs:/app/configs
     ports:
       - "8000:8000"
     healthcheck:
