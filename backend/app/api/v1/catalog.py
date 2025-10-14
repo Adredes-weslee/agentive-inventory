@@ -25,7 +25,7 @@ def _error(code: str, message: str) -> dict[str, str]:
     return {"error": code, "message": message}
 
 @router.get("/catalog/ids")
-def get_ids(limit: int = Query(20, ge=1, le=500)) -> dict[str, List[str]]:
+def get_ids(limit: int = Query(20, ge=1, le=1000)) -> dict[str, List[str]]:
     """Return up to `limit` M5 row ids for UI typeahead."""
     if not os.path.exists(SALES_PATH):
         raise HTTPException(
