@@ -31,6 +31,21 @@ def load_yaml(path: str):
     with open(path, "r", encoding="utf-8") as f:
         return yaml.safe_load(f) or {}
 
+def load_from_api(kind: str) -> dict:
+    try:
+        r = requests.get(f"{API_URL}/configs/{kind}", headers=get_headers(), timeout=10)
+        if r.status_code == 401:
+            st.info("Unauthorized to read configs from API. Set API token in the sidebar.")
+            return {}
+        if r.ok:
+            return r.json() or {}
+    except Exception:
+        pass
+    return {}
+
+# Prefer API (inside Docker), fall back to local files (dev)
+settings_data = load_from_api("settings") or load_yaml(SETTINGS_PATH)
+thresholds_data = load_from_api("thresholds") or load_yaml(THRESHOLDS_PATH)
 
 settings_data = load_yaml(SETTINGS_PATH)
 thresholds_data = load_yaml(THRESHOLDS_PATH)
