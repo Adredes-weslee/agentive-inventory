@@ -3,15 +3,18 @@ r"""backend\app\services\forecasting_service.py
 Demand forecasting service built around the M5 competition dataset.
 
 The implementation follows a tiered modelling strategy inspired by the
-M5 forecasting competition.  Depending on the SKU importance and the
+M5 forecasting competition. Depending on the SKU importance and the
 available third‑party libraries, the service can switch between a simple
 statistical baseline, Facebook Prophet, or an XGBoost regressor with lag
-features.  The module is intentionally self‑contained so that it can be
-unit tested without loading the FastAPI app.
+features.
+
+Heavy ML libraries (prophet, xgboost) are imported lazily inside the
+branches that actually use them, so startup stays fast and lean.
 """
 
 from __future__ import annotations
 
+import importlib.util
 import logging
 import os
 from dataclasses import dataclass
@@ -25,22 +28,6 @@ import joblib
 import numpy as np
 import pandas as pd
 
-try:  # pragma: no cover - optional dependency
-    from prophet import Prophet
-
-    HAS_PROPHET = True
-except Exception:  # pragma: no cover - prophet not installed or unusable
-    Prophet = None  # type: ignore
-    HAS_PROPHET = False
-
-try:  # pragma: no cover - optional dependency
-    from xgboost import XGBRegressor
-
-    HAS_XGBOOST = True
-except Exception:  # pragma: no cover - xgboost not installed or unusable
-    XGBRegressor = None  # type: ignore
-    HAS_XGBOOST = False
-
 from ..core.config import load_yaml
 from ..models.schemas import ForecastPoint, ForecastResponse
 
@@ -49,6 +36,19 @@ LOGGER = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Helper utilities (kept top-level for straightforward unit testing)
+
+
+def _module_available(module_name: str) -> bool:
+    spec = importlib.util.find_spec(module_name)
+    return spec is not None
+
+
+def _has_prophet() -> bool:
+    return _module_available("prophet")
+
+
+def _has_xgboost() -> bool:
+    return _module_available("xgboost")
 
 
 def build_lag_features(history: pd.Series, lags: Iterable[int]) -> pd.DataFrame:
@@ -83,13 +83,10 @@ def build_lag_features(history: pd.Series, lags: Iterable[int]) -> pd.DataFrame:
 def choose_model(is_a_class: bool, has_prophet: bool, has_xgboost: bool) -> str:
     """Choose which forecasting model should be applied.
 
-    The decision logic closely mirrors the project requirements:
-
     * Class-A SKUs should leverage the XGBoost model when available.
     * Otherwise Prophet is preferred for its richer seasonality support.
     * A simple moving average baseline is used as the safety fallback.
     """
-
     if is_a_class and has_xgboost:
         return "xgb"
     if has_prophet:
@@ -102,22 +99,7 @@ def compute_pi(
     residuals: pd.Series,
     z_value: float,
 ) -> tuple[pd.Series, pd.Series]:
-    """Compute prediction interval bounds from residuals.
-
-    Parameters
-    ----------
-    mean_forecast:
-        Series containing the forecasted mean demand.
-    residuals:
-        Series of in-sample residuals (actual minus predicted).  The
-        standard deviation of these residuals determines the interval width.
-    z_value:
-        Z-score derived from the desired service level.
-
-    Returns
-    -------
-    Tuple of ``(lower, upper)`` bounds with non-negative values.
-    """
+    """Compute prediction interval bounds from residuals."""
 
     if residuals.empty:
         spread = sqrt(max(mean_forecast.mean(), 1.0))
@@ -141,7 +123,6 @@ class ForecastResult(ForecastResponse):
     @property
     def yhat(self) -> pd.DataFrame:
         """Return the forecast as a ``pd.DataFrame`` with the canonical schema."""
-
         return pd.DataFrame(
             [
                 {
@@ -202,16 +183,12 @@ class ForecastingService:
 
         data_root_path = Path(os.getenv("DATA_DIR", self.data_root))
         models_dir_env = os.getenv("MODELS_DIR")
-        self.models_dir: Path = (
-            Path(models_dir_env)
-            if models_dir_env
-            else data_root_path / "models"
-        )
+        self.models_dir: Path = Path(models_dir_env) if models_dir_env else data_root_path / "models"
         self._model_cache: dict[str, object] = {}
         self._model_artifacts: dict[str, Path] = {}
 
-        self._warm_model_cache()
-
+        # Do NOT pre-load or enumerate models here; keep startup fast.
+        # Configuration and data are loaded eagerly (lightweight).
         self._load_configuration()
         self._load_data()
 
@@ -433,35 +410,20 @@ class ForecastingService:
             raise ValueError(f"Calendar is missing entries for day '{exc.args[0]}'") from exc
 
     # ------------------------------------------------------------------
-    def _warm_model_cache(self) -> None:
-        """Ensure the model cache directory exists and record known artifacts."""
-
-        try:
-            self.models_dir.mkdir(parents=True, exist_ok=True)
-        except OSError:  # pragma: no cover - filesystem failure
-            LOGGER.exception("Unable to create model cache directory at %s", self.models_dir)
-            return
-
-        self._model_cache.clear()
-        self._model_artifacts.clear()
-
-        try:
-            for artifact in self.models_dir.glob("*.joblib"):
-                self._model_artifacts[artifact.stem] = artifact
-        except OSError:  # pragma: no cover - filesystem failure
-            LOGGER.exception("Unable to enumerate cached models in %s", self.models_dir)
-
-    # ------------------------------------------------------------------
     def _model_cache_key(self, model_type: str, history: pd.Series) -> str:
         sku = (history.name or "series").replace(os.sep, "_")
         return f"{model_type}__{sku}"
 
     # ------------------------------------------------------------------
     def _model_artifact_path(self, cache_key: str) -> Path:
-        path = self._model_artifacts.get(cache_key)
-        if path is None:
-            path = self.models_dir / f"{cache_key}.joblib"
-            self._model_artifacts[cache_key] = path
+        # Ensure the cache directory exists only when we actually need it
+        try:
+            self.models_dir.mkdir(parents=True, exist_ok=True)
+        except OSError:  # pragma: no cover - filesystem failure
+            LOGGER.exception("Unable to create model cache directory at %s", self.models_dir)
+        path = self.models_dir / f"{cache_key}.joblib"
+        # Keep a small in-memory index, but no eager enumeration
+        self._model_artifacts[cache_key] = path
         return path
 
     # ------------------------------------------------------------------
@@ -519,7 +481,12 @@ class ForecastingService:
     def _xgb_forecast(
         self, history: pd.Series, future_index: pd.DatetimeIndex
     ) -> tuple[pd.Series, pd.Series, pd.Series]:
-        assert HAS_XGBOOST and XGBRegressor is not None
+        # Lazy import: only load xgboost when the model is requested
+        try:
+            from xgboost import XGBRegressor  # type: ignore
+        except Exception as exc:  # pragma: no cover - environment without xgboost
+            raise ValueError("XGBoost is not installed; cannot run 'xgb' model.") from exc
+
         if len(history) < max(self.XGB_LAGS) + 1:
             raise ValueError("Insufficient history length for XGBoost model")
 
@@ -589,7 +556,11 @@ class ForecastingService:
     def _prophet_forecast(
         self, history: pd.Series, future_index: pd.DatetimeIndex
     ) -> tuple[pd.Series, pd.Series, pd.Series, pd.Series, pd.Series]:
-        assert HAS_PROPHET and Prophet is not None
+        # Lazy import: only load prophet when the model is requested
+        try:
+            from prophet import Prophet  # type: ignore
+        except Exception as exc:  # pragma: no cover - environment without prophet
+            raise ValueError("Prophet is not installed; cannot run 'prophet' model.") from exc
 
         cache_key = self._model_cache_key("prophet", history)
         model_path = self._model_artifact_path(cache_key)
@@ -659,9 +630,9 @@ class ForecastingService:
         candidates: List[str] = []
 
         def _available(model_name: str) -> bool:
-            if model_name == "prophet" and not HAS_PROPHET:
+            if model_name == "prophet" and not _has_prophet():
                 return False
-            if model_name == "xgb" and not HAS_XGBOOST:
+            if model_name == "xgb" and not _has_xgboost():
                 return False
             return True
 
@@ -669,7 +640,7 @@ class ForecastingService:
             return [preferred] if _available(preferred) else []
 
         if history_length < max(self.XGB_LAGS) * 2:
-            priority = ["sma", preferred, "prophet"]
+            priority = ["sma", preferred, "prophet", "xgb"]
         else:
             priority = [preferred, "prophet", "xgb", "sma"]
 
@@ -878,13 +849,13 @@ class ForecastingService:
 
         candidate_models: List[str] = []
         if len(history) < max(self.XGB_LAGS) * 2:
-            priority = ["sma", model_choice, "prophet"]
+            priority = ["sma", model_choice, "prophet", "xgb"]
         else:
-            priority = [model_choice, "prophet", "sma"]
+            priority = [model_choice, "prophet", "xgb", "sma"]
         for candidate in priority:
-            if candidate == "prophet" and not HAS_PROPHET:
+            if candidate == "prophet" and not _has_prophet():
                 continue
-            if candidate == "xgb" and not HAS_XGBOOST:
+            if candidate == "xgb" and not _has_xgboost():
                 continue
             if candidate not in candidate_models:
                 candidate_models.append(candidate)
@@ -949,4 +920,3 @@ class ForecastingService:
         ]
 
         return ForecastResult(sku_id=sku_id, horizon_days=horizon_days, forecast=points)
-
