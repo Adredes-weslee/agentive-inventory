@@ -27,6 +27,7 @@ agentive-inventory/
 ├─ pyproject.toml
 ├─ environment.yml                    # conda environment
 ├─ docker-compose.yml                 # root compose (uses ./.env)
+├─ render.yaml                        # Render deploys: FastAPI API + Streamlit UI (+ optional n8n); sets env vars and persistent disks
 ├─ .github/
 │  └─ workflows/
 │     └─ ci.yml                       # ruff + mypy + pytest + coverage
@@ -97,10 +98,6 @@ agentive-inventory/
 │  │  └─ api.py                       # API client helpers
 │  ├─ requirements.txt
 │  └─ Dockerfile
-├─ infra/
-│  ├─ render.yaml                     # two Render services (API + UI)
-│  └─ k8s/
-│     └─ README.md
 └─ orchestration/
    ├─ README.md
    └─ n8n_workflows/
