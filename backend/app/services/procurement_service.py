@@ -291,9 +291,14 @@ class ProcurementService:
         if demand <= 0:
             return 0.0
 
-        turnover_days = max(order_qty / max(demand, 1e-6), 1.0)
-        inventory_cost = (order_qty / turnover_days) * unit_cost
-        if inventory_cost <= 0:
+        gross_margin = price - unit_cost
+        if gross_margin <= 0:
             return 0.0
 
-        return float((price - unit_cost) / inventory_cost)
+        avg_inventory_units = max(order_qty / 2.0, 1e-6)
+        avg_inventory_cost = avg_inventory_units * unit_cost
+        if avg_inventory_cost <= 0:
+            return 0.0
+
+        cycle_margin = gross_margin * order_qty
+        return float(cycle_margin / avg_inventory_cost)
