@@ -30,3 +30,15 @@ promo_calendar:
     description: "Black Friday sales"
   - date: "2025-12-25"  # Example: Christmas
     description: "Christmas holiday"
+
+# Forecasting defaults by ABC class
+# choices: auto | sma | prophet | xgb  (match what your backend supports)
+model_A: auto
+model_B: auto
+model_C: auto
+
+# Optional: per-item overrides
+# model_overrides:
+#   FOODS_3_090_CA_1_validation: prophet
+#   HOBBIES_1_002_CA_1_validation: xgb
+
