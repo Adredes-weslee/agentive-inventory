@@ -14,6 +14,7 @@ import streamlit as st
 from utils.api import get_api_token, get_headers
 
 API_URL = os.getenv("API_URL", "http://localhost:8000/api/v1")
+CATALOG_LIMIT = 500  # backend validation caps limit at 500
 
 
 def _fetch_recommendations(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -109,6 +110,110 @@ def _explain_recommendations(
         return None
 
 
+def _render_recommendation_view(body: Dict[str, Any], recommendations: List[Dict[str, Any]]) -> None:
+    """Render the recommendation table, rationale, and approval form.
+
+    Persists the request/response in session_state so reruns triggered by
+    widget interaction continue displaying the latest result.
+    """
+
+    # Persist the latest result so subsequent reruns still show it
+    st.session_state["rec_view"] = {"request": body, "recommendations": recommendations}
+
+    df = pd.DataFrame(recommendations)
+    desired_columns = ["order_qty", "reorder_point", "confidence", "requires_approval"]
+    display_df = df[[col for col in desired_columns if col in df.columns]]
+
+    st.write("### Recommended action")
+    st.dataframe(display_df, use_container_width=True)
+
+    requires_approval = any(rec.get("requires_approval") for rec in recommendations)
+    approval_status = "⚠️ Manual approval required" if requires_approval else "✅ Auto-approval"
+    st.subheader("Decision support")
+    st.write(approval_status)
+
+    explanation = _explain_recommendations(body["sku_id"], body["horizon_days"], recommendations)
+    if explanation:
+        st.markdown("### Rationale")
+        st.write(explanation)
+
+    # ---- Approval UI (wrapped in a form so toggles/typing don't wipe the page) ----
+    st.markdown("### Approve or reject recommendation")
+
+    # Extract default recommended quantity from the first row if present
+    recommended_qty: Optional[int] = None
+    if not df.empty and "order_qty" in df.columns:
+        raw_qty = df.iloc[0]["order_qty"]
+        try:
+            recommended_qty = int(raw_qty)
+        except (TypeError, ValueError):
+            try:
+                recommended_qty = int(float(raw_qty))
+            except (TypeError, ValueError):
+                recommended_qty = None
+
+    # One decision tracked per-SKU
+    approval_state_key = f"approval_state::{body['sku_id']}"
+    approval_state = st.session_state.setdefault(approval_state_key, {"completed_action": None})
+    interaction_disabled = approval_state.get("completed_action") is not None
+
+    with st.form(f"approval_form::{body['sku_id']}", clear_on_submit=False):
+        with st.expander("Approval workflow", expanded=requires_approval and not interaction_disabled):
+            provide_override = st.checkbox(
+                "Provide quantity override",
+                value=False if recommended_qty is not None else True,
+                disabled=interaction_disabled,
+                key=f"approval_qty_override::{body['sku_id']}",
+            )
+            if provide_override:
+                qty = st.number_input(
+                    "Override qty",
+                    min_value=0,
+                    value=(recommended_qty if (recommended_qty is not None and recommended_qty >= 0) else 0),
+                    step=1,
+                    disabled=interaction_disabled,
+                    key=f"approval_qty_input::{body['sku_id']}",
+                )
+            else:
+                qty = max(int(recommended_qty or 0), 0)
+
+            note = st.text_input(
+                "Reason / note",
+                value="",
+                disabled=interaction_disabled,
+                key=f"approval_reason::{body['sku_id']}",
+            )
+
+            col_a, col_b = st.columns(2)
+            approve = col_a.form_submit_button("✅ Approve", disabled=interaction_disabled)
+            reject = col_b.form_submit_button("❌ Reject", disabled=interaction_disabled)
+
+        if approve or reject:
+            action = "approve" if approve else "reject"
+            submission = {
+                "sku_id": body["sku_id"],
+                "action": action,
+                # Always send qty (API requires ge=0). Use override or recommended.
+                "qty": int(qty if isinstance(qty, (int, float)) else 0),
+                "reason": (note or action),
+            }
+            try:
+                resp = requests.post(
+                    f"{API_URL}/approvals",
+                    json=submission,
+                    headers=get_headers(),
+                    timeout=20,
+                )
+                resp.raise_for_status()
+            except requests.RequestException as exc:
+                st.error(f"Failed to submit {action} decision: {exc}")
+            else:
+                approval_state["completed_action"] = action
+                st.session_state[approval_state_key] = approval_state
+                icon = "✅" if action == "approve" else "❌"
+                st.success(f"{icon} {action.title()}d recommendation for {body['sku_id']}")
+
+
 @st.cache_data(ttl=300)
 def _get_catalog_ids(limit: int = 50, api_token: str = "") -> List[str]:
     """Fetch a sample of catalog row identifiers for convenience selections."""
@@ -155,120 +260,25 @@ with tab_single:
             if not recommendations:
                 st.info("No recommendation available for the requested SKU.")
             else:
-                df = pd.DataFrame(recommendations)
-                desired_columns = ["order_qty", "reorder_point", "confidence", "requires_approval"]
-                display_df = df[[col for col in desired_columns if col in df.columns]]
-
-                st.write("### Recommended action")
-                st.dataframe(display_df, use_container_width=True)
-
-                requires_approval = any(rec.get("requires_approval") for rec in recommendations)
-                approval_status = "⚠️ Manual approval required" if requires_approval else "✅ Auto-approval"
-                st.subheader("Decision support")
-                st.write(approval_status)
-
-                explanation = _explain_recommendations(body["sku_id"], body["horizon_days"], recommendations)
-                if explanation:
-                    st.markdown("### Rationale")
-                    st.write(explanation)
-
-                approval_state_key = f"approval_state::{body['sku_id']}"
-                approval_state = st.session_state.setdefault(approval_state_key, {"completed_action": None})
-                interaction_disabled = approval_state.get("completed_action") is not None
-
-                st.markdown("### Approve or reject recommendation")
-                with st.expander("Approval workflow", expanded=requires_approval and not interaction_disabled):
-                    recommended_qty = None
-                    if not df.empty and "order_qty" in df.columns:
-                        try:
-                            raw_qty = df.iloc[0]["order_qty"]
-                            recommended_qty = int(raw_qty)
-                        except (TypeError, ValueError):
-                            try:
-                                recommended_qty = int(float(raw_qty))
-                            except (TypeError, ValueError):
-                                recommended_qty = None
-
-                    override_default = recommended_qty is None
-                    include_override = st.checkbox(
-                        "Provide quantity override",
-                        value=override_default,
-                        disabled=interaction_disabled,
-                        key=f"approval_qty_override::{body['sku_id']}"
-                    )
-
-                    qty_value = recommended_qty
-                    if include_override:
-                        qty_value = st.number_input(
-                            "Quantity (optional override)",
-                            min_value=0,
-                            value=recommended_qty if recommended_qty is not None else 0,
-                            step=1,
-                            disabled=interaction_disabled,
-                            key=f"approval_qty_input::{body['sku_id']}"
-                        )
-
-                    reason_value = st.text_input(
-                        "Reason / note",
-                        value="",
-                        disabled=interaction_disabled,
-                        key=f"approval_reason::{body['sku_id']}"
-                    )
-
-                    payload_base = {"sku_id": body["sku_id"]}
-                    if qty_value is not None:
-                        payload_base["qty"] = int(qty_value)
-                    if reason_value.strip():
-                        payload_base["reason"] = reason_value.strip()
-
-                    col_approve, col_reject = st.columns(2)
-
-                    def _submit_decision(action: str) -> None:
-                        submission = {**payload_base, "action": action}
-                        try:
-                            response = requests.post(
-                                f"{API_URL}/approvals",
-                                json=submission,
-                                headers=get_headers(),
-                                timeout=20,
-                            )
-                            response.raise_for_status()
-                        except requests.RequestException as exc:
-                            st.error(f"Failed to submit {action} decision: {exc}")
-                        else:
-                            approval_state["completed_action"] = action
-                            st.session_state[approval_state_key] = approval_state
-                            icon = "✅" if action == "approve" else "❌"
-                            st.toast(
-                                f"{icon} {action.title()}d recommendation for {body['sku_id']}",
-                                icon=icon,
-                            )
-
-                approve_pressed = col_approve.button(
-                    "✅ Approve",
-                    disabled=interaction_disabled,
-                    key=f"approval_approve::{body['sku_id']}"
-                )
-                if approve_pressed and not interaction_disabled:
-                    _submit_decision("approve")
-
-                reject_pressed = col_reject.button(
-                    "❌ Reject",
-                    disabled=interaction_disabled,
-                    key=f"approval_reject::{body['sku_id']}"
-                )
-                if reject_pressed and not interaction_disabled:
-                    _submit_decision("reject")
+                _render_recommendation_view(body, recommendations)
+    else:
+        # No new submit; if we have a previous result, keep showing it
+        rec_view = st.session_state.get("rec_view")
+        if rec_view and isinstance(rec_view, dict):
+            body = rec_view.get("request") or {}
+            recs = rec_view.get("recommendations") or []
+            if body and recs:
+                _render_recommendation_view(body, recs)
 
 
 with tab_batch:
     st.subheader("Batch recommendations")
     st.caption(
-        "Start typing to select SKUs from the catalog (up to 1,000) or paste a list manually. "
+        "Start typing to select SKUs from the catalog (up to 500) or paste a list manually. "
         "Recommendations will be prioritised by GMROI delta when applying a budget."
     )
 
-    catalog_options = _get_catalog_ids(limit=1000, api_token=get_api_token())
+    catalog_options = _get_catalog_ids(limit=CATALOG_LIMIT, api_token=get_api_token())
     selected_catalog_ids: List[str] = []
 
     with st.form(key="batch_form"):
