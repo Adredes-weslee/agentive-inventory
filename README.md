@@ -22,54 +22,89 @@ Uses the **M5 Forecasting – Accuracy** dataset (Walmart) as canonical demand h
 agentive-inventory/
 ├─ README.md
 ├─ .env.example
+├─ .gitattributes
+├─ .gitignore
 ├─ pyproject.toml
+├─ environment.yml                    # conda environment
+├─ docker-compose.yml                 # root compose (uses ./.env)
+├─ .github/
+│  └─ workflows/
+│     └─ ci.yml                       # ruff + mypy + pytest + coverage
 ├─ configs/
-│  ├─ settings.yaml
-│  └─ thresholds.yaml
-├─ data/                         # Put M5 CSVs here
-│  ├─ sales_train_validation.csv
+│  ├─ settings.yaml                   # service-level, lead time, costs, margins
+│  └─ thresholds.yaml                 # auto-approval, min service level, GMROI min
+├─ data/                              # M5 CSVs + runtime artifacts
 │  ├─ calendar.csv
-│  └─ sell_prices.csv
+│  ├─ sales_train_evaluation.csv
+│  ├─ sales_train_validation.csv
+│  ├─ sample_submission.csv
+│  ├─ sell_prices.csv
+│  ├─ approvals_audit_log.jsonl       # approvals audit (created at runtime)
+│  └─ models/                         # joblib cache (created at runtime)
 ├─ backend/
 │  ├─ app/
 │  │  ├─ main.py
-│  │  ├─ api/v1/
-│  │  │  ├─ health.py                    # GET /health
-│  │  │  ├─ forecasts.py                 # GET /forecasts/{sku_id}
-│  │  │  ├─ procure.py                   # POST /procure/*
-│  │  │  ├─ catalog.py                   # GET /catalog/ids
-│  │  │  ├─ configs.py                   # GET/PUT /configs/{settings,thresholds}
-│  │  │  ├─ approvals.py                 # POST /approvals; GET /approvals/audit-log
-│  │  │  └─ backtest.py                  # GET /backtest/{sku_id}
+│  │  ├─ api/
+│  │  │  └─ v1/
+│  │  │     ├─ __init__.py
+│  │  │     ├─ approvals.py            # POST /approvals; GET /approvals/audit-log
+│  │  │     ├─ backtest.py             # GET /backtest/{sku_id}
+│  │  │     ├─ catalog.py              # GET /catalog/ids
+│  │  │     ├─ configs.py              # GET/PUT /configs/{settings,thresholds}
+│  │  │     ├─ data.py                 # data validation/inspection endpoints
+│  │  │     ├─ forecasts.py            # GET /forecasts/{sku_id}
+│  │  │     ├─ health.py               # GET /health
+│  │  │     └─ procure.py              # POST /procure/*
 │  │  ├─ core/
+│  │  │  ├─ __init__.py
 │  │  │  ├─ config.py
-│  │  │  └─ observability.py             # auth, rate-limit, logs, /metrics
-│  │  ├─ models/schemas.py
+│  │  │  └─ observability.py           # auth, rate-limit, logs, /metrics
+│  │  ├─ models/
+│  │  │  ├─ __init__.py
+│  │  │  └─ schemas.py
 │  │  └─ services/
-│  │     ├─ forecasting_service.py       # SMA/Prophet/XGBoost + backtests + joblib cache
-│  │     ├─ procurement_service.py       # EOQ/ROP + GMROI guardrails (+ seasonality)
-│  │     ├─ inventory_service.py         # M5 loaders, unit/price lookup, seasonality
-│  │     └─ llm_service.py               # Gemini explanations (optional)
+│  │     ├─ __init__.py
+│  │     ├─ forecasting_service.py     # SMA/Prophet/XGBoost + backtests + cache
+│  │     ├─ inventory_service.py       # M5 loaders, unit/price lookup
+│  │     ├─ llm_service.py             # Gemini explanations (optional)
+│  │     ├─ procurement_service.py     # EOQ/ROP + GMROI guardrails
+│  │     └─ validation_service.py      # dataset checks
+│  ├─ tests/                           # pytest suite
+│  │  ├─ __init__.py
+│  │  ├─ test_admin_endpoints.py
+│  │  ├─ test_auth_and_rate.py
+│  │  ├─ test_backtest_api.py
+│  │  ├─ test_batch_procure_api.py
+│  │  ├─ test_catalog_api.py
+│  │  ├─ test_data_validate_api.py
+│  │  ├─ test_forecast_api.py
+│  │  ├─ test_forecasting.py
+│  │  ├─ test_procure_api.py
+│  │  └─ test_procurement.py
 │  ├─ requirements.txt
 │  └─ Dockerfile
 ├─ frontend/
-│  ├─ app.py                            # Health banner + API token sidebar
-│  └─ pages/
-│     ├─ 1_Dashboard.py                 # KPIs + PI band + CSV export
-│     ├─ 2_Forecasts.py                 # Typeahead (GET /catalog/ids), CSV export
-│     ├─ 3_Recommendations.py           # Explain, Approve/Reject, Batch mode
-│     ├─ 4_Settings.py                  # Edit + PUT /configs/{settings,thresholds}
-│     ├─ 5_Backtest.py                  # Rolling backtest + history overlay
-│     └─ 6_Audit_Log.py                 # Read /approvals/audit-log
-├─ orchestration/
-│  ├─ README.md
-│  └─ n8n_workflows/
-│     ├─ example_workflow.json          # Daily schedule → forecast → recommend
-│     └─ approval_loop.json             # Human decision → POST /approvals
+│  ├─ app.py                          # Health banner + API token sidebar
+│  ├─ pages/
+│  │  ├─ 1_Dashboard.py               # KPIs + PI band + CSV export
+│  │  ├─ 2_Forecasts.py               # Typeahead (GET /catalog/ids), CSV export
+│  │  ├─ 3_Recommendations.py         # Explain, Approve/Reject, Batch mode
+│  │  ├─ 4_Settings.py                # Edit + PUT /configs/*
+│  │  ├─ 5_Backtest.py                # Rolling backtest + history overlay
+│  │  └─ 6_Audit_Log.py               # Read /approvals/audit-log
+│  ├─ utils/
+│  │  ├─ __init__.py
+│  │  └─ api.py                       # API client helpers
+│  ├─ requirements.txt
+│  └─ Dockerfile
 ├─ infra/
-│  └─ render.yaml                       # two Render services (API + UI)
-├─ docker-compose.yml                   # root compose (uses ./.env)
-└─ .github/workflows/ci.yml             # ruff + mypy + pytest + coverage
+│  ├─ render.yaml                     # two Render services (API + UI)
+│  └─ k8s/
+│     └─ README.md
+└─ orchestration/
+   ├─ README.md
+   └─ n8n_workflows/
+      └─ example_workflow.json        # Daily schedule → forecast → recommend
 ```
 ---
 
@@ -248,9 +283,19 @@ python -m streamlit run frontend/app.py
   pytest -q
   ```
 
-Tests cover forecasts/procure, batch selection, backtesting, catalog IDs, configs, approvals/audit log, data validation, and auth/rate-limit behavior.
+Notes for running tests:
+- Leave GEMINI_API_KEY empty so /procure/recommendations/explain returns 404 (expected by tests).
+- Disable auth: leave API_TOKEN empty (or set API_AUTH_DISABLED=1) so TestClient calls aren’t 401.
 
----
+PowerShell (optional):
+```powershell
+Remove-Item Env:GEMINI_API_KEY -ErrorAction SilentlyContinue
+Remove-Item Env:API_TOKEN -ErrorAction SilentlyContinue
+$env:API_AUTH_DISABLED = "1"
+pytest -q
+```
+
+Tests cover forecasts/procure, batch selection, backtesting, catalog IDs, configs, approvals/audit log, data validation, and auth/rate-limit behavior.
 
 ## Docker / Compose notes
 
