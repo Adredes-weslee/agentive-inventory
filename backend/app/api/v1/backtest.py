@@ -31,6 +31,10 @@ def backtest(
     model: Literal["auto", "sma", "prophet", "xgb"] = Query(
         "auto", description="Model to evaluate. 'auto' selects the recommended model."
     ),
+    detail: bool = Query(
+        False,
+        description="When true, include detailed history and origin metadata in the response.",
+    ),
     cv: Literal["none", "store", "category"] = Query(
         "none",
         description=(
@@ -38,7 +42,7 @@ def backtest(
             "'category' samples SKUs in the same category."
         ),
     ),
-):
+) -> dict[str, object]:
     """Return rolling forecast accuracy metrics for the requested SKU."""
 
     if not _inventory_service.has_sku(sku_id):
@@ -75,12 +79,10 @@ def backtest(
         ) from exc
 
     mape = result.get("mape")
-    result["mape"] = float(np.round(mape, 6)) if mape is not None and np.isfinite(mape) else None
+    result["mape"] = _round_metric(mape)
 
     coverage = result.get("coverage")
-    result["coverage"] = (
-        float(np.round(coverage, 6)) if coverage is not None and np.isfinite(coverage) else None
-    )
+    result["coverage"] = _round_metric(coverage)
 
     if cv != "none":
         sales_df = _inventory_service.sales_df
@@ -116,7 +118,9 @@ def backtest(
                         continue
 
                     peer_mape = peer_result.get("mape")
-                    if peer_mape is not None and np.isfinite(peer_mape):
+                    if isinstance(peer_mape, (int, float, np.floating)) and np.isfinite(
+                        float(peer_mape)
+                    ):
                         mapes.append(float(peer_mape))
 
                 if mapes:
@@ -126,4 +130,24 @@ def backtest(
                         "mean_mape": float(np.round(float(np.mean(mapes)), 6)),
                     }
 
+    if detail:
+        history_payload = result.get("history")
+        if not isinstance(history_payload, dict):
+            history_dates = result.get("history_dates")
+            history_values = result.get("history_values")
+            if isinstance(history_dates, list) and isinstance(history_values, list):
+                history_payload = {"dates": history_dates, "y": history_values}
+            else:
+                history_payload = None
+        if history_payload is not None:
+            result["history"] = history_payload
+
+        origin_dates_value = result.get("origin_dates")
+        if origin_dates_value is not None:
+            result["origin_dates"] = origin_dates_value
+
     return result
+def _round_metric(value: object) -> float | None:
+    if isinstance(value, (int, float, np.floating)):
+        return float(np.round(float(value), 6))
+    return None

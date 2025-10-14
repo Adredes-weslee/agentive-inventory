@@ -2,7 +2,6 @@ r"""backend/tests/test_admin_endpoints.py"""
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 import sys
 

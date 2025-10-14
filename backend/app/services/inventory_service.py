@@ -44,16 +44,6 @@ class InventoryService:
         self._load_settings()
 
     # ------------------------------------------------------------------
-    def get_lead_time_days(self, sku_id: str) -> float:
-        """Return the best-known replenishment lead time in days."""
-
-        # The reference datasets do not expose lead-time information.  We
-        # therefore use a conservative 7-day placeholder which downstream
-        # services can override via context or configuration.
-        _ = sku_id  # Intentionally unused but keeps signature explicit.
-        return 7.0
-
-    # ------------------------------------------------------------------
     def _load(self) -> None:
         sales_path = os.path.join(self.data_root, "sales_train_validation.csv")
         prices_path = os.path.join(self.data_root, "sell_prices.csv")

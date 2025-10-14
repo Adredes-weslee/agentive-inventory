@@ -761,6 +761,7 @@ class ForecastingService:
         strict = model_hint != "auto"
 
         dates: list[str] = []
+        origin_dates: list[str] = []
         actual_values: list[float] = []
         predicted_values: list[float] = []
         coverage_hits = 0
@@ -791,6 +792,8 @@ class ForecastingService:
 
             origin_hits = 0
             origin_total = 0
+
+            origin_dates.append(train_slice.index[-1].date().isoformat())
 
             for dt, actual in future_slice.items():
                 prediction = float(mean_forecast.loc[dt])
@@ -826,6 +829,8 @@ class ForecastingService:
         coverage = float(coverage_hits / coverage_total) if coverage_total else 0.0
 
         history_tail = history.iloc[-window:]
+        history_dates = [dt.date().isoformat() for dt in history_tail.index]
+        history_values = [float(v) for v in history_tail.values]
 
         return {
             "dates": dates,
@@ -834,8 +839,13 @@ class ForecastingService:
             "mape": mape,
             "coverage": coverage,
             "per_origin_coverage": [float(v) for v in per_origin_coverage],
-            "history_dates": [dt.date().isoformat() for dt in history_tail.index],
-            "history_values": [float(v) for v in history_tail.values],
+            "history_dates": history_dates,
+            "history_values": history_values,
+            "history": {
+                "dates": history_dates,
+                "y": history_values,
+            },
+            "origin_dates": origin_dates,
             "model_used": model_used or preferred_model,
         }
 

@@ -10,7 +10,7 @@ variables and YAML files in `configs/`.
 
 import os
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
 
@@ -58,7 +58,7 @@ def _root() -> RedirectResponse:
 
 
 @app.get("/metrics", include_in_schema=False)
-async def _metrics():
+async def _metrics() -> Response:
     """Expose Prometheus metrics."""
 
     return metrics_endpoint()

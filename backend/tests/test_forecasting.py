@@ -10,9 +10,9 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))
 
-import pandas as pd
+import pandas as pd  # noqa: E402
 
-from backend.app.services.forecasting_service import ForecastingService
+from backend.app.services.forecasting_service import ForecastingService  # noqa: E402
 
 
 def _write_m5_stub(tmp_path: Path) -> None:

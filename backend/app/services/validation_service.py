@@ -11,7 +11,8 @@ REQUIRED_PRICE_COLS = ["item_id", "wm_yr_wk", "sell_price"]
 
 class ValidationService:
     def __init__(self, data_root: str | None = None):
-        self.data_root = data_root or os.getenv("DATA_DIR", "data")
+        default_root = os.getenv("DATA_DIR", "data")
+        self.data_root: str = data_root if data_root else default_root
 
     def run(self) -> dict:
         checks = []
