@@ -117,8 +117,25 @@ def _render_recommendation_view(body: Dict[str, Any], recommendations: List[Dict
     widget interaction continue displaying the latest result.
     """
 
-    # Persist the latest result so subsequent reruns still show it
-    st.session_state["rec_view"] = {"request": body, "recommendations": recommendations}
+    previous_view = st.session_state.get("rec_view")
+    payload_matches_previous = bool(
+        previous_view
+        and previous_view.get("request") == body
+        and previous_view.get("recommendations") == recommendations
+    )
+    if payload_matches_previous and "explanation" in previous_view:
+        explanation = previous_view.get("explanation")
+    else:
+        explanation = _explain_recommendations(
+            body["sku_id"], body["horizon_days"], recommendations
+        )
+
+    # Persist the latest result so subsequent reruns still show it (and reuse explanation)
+    st.session_state["rec_view"] = {
+        "request": body,
+        "recommendations": recommendations,
+        "explanation": explanation,
+    }
 
     df = pd.DataFrame(recommendations)
     desired_columns = ["order_qty", "reorder_point", "confidence", "requires_approval"]
@@ -132,7 +149,6 @@ def _render_recommendation_view(body: Dict[str, Any], recommendations: List[Dict
     st.subheader("Decision support")
     st.write(approval_status)
 
-    explanation = _explain_recommendations(body["sku_id"], body["horizon_days"], recommendations)
     if explanation:
         st.markdown("### Rationale")
         st.write(explanation)
