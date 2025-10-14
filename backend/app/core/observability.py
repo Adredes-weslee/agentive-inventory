@@ -193,7 +193,12 @@ class TokenAndRateLimitMiddleware(BaseHTTPMiddleware):
     _lock: threading.Lock = threading.Lock()
     _buckets: dict[str, deque[float]] = defaultdict(deque)
     _per_minute: int = int(os.getenv("RATE_LIMIT_PER_MIN", "60"))
-    _token: str | None = os.getenv("API_TOKEN")
+    # IMPORTANT: During pytest runs we default to *disabling* auth even if a host
+    # environment happens to have API_TOKEN set. Individual tests that verify auth
+    # behavior (see test_auth_and_rate.py) explicitly monkeypatch this class
+    # attribute to a non-None value before creating a TestClient.
+    # This keeps the rest of the API tests independent of the developer's shell/env.
+    _token: str | None = None if os.getenv("PYTEST_CURRENT_TEST") else os.getenv("API_TOKEN")
     _exempt_prefixes: tuple[str, ...] = (
         "/api/v1/health",
         "/metrics",
