@@ -125,10 +125,24 @@ _CURRENT_SALES_PATH: Path = Path(os.getenv("DATA_DIR", "data")) / "sales_train_v
 
 @lru_cache(maxsize=8)
 def _day_columns_for_path(path: Path) -> list[str]:
-    if not path.exists():
+    columns: Sequence[str] | None = None
+    if path.exists():
+        header = pd.read_csv(path, nrows=0)
+        columns = header.columns
+    else:
+        parquet_path = path.with_suffix(".parquet")
+        if parquet_path.exists():
+            try:
+                import pyarrow.parquet as pq  # type: ignore[import-not-found]
+
+                columns = pq.read_schema(parquet_path).names
+            except Exception:  # pragma: no cover - fallback when pyarrow is missing
+                columns = pd.read_parquet(parquet_path, columns=None).columns
+
+    if columns is None:
         return []
-    header = pd.read_csv(path, nrows=0)
-    return [col for col in header.columns if col.startswith("d_")]
+
+    return [col for col in columns if col.startswith("d_")]
 
 
 def _set_sales_header_path(path: Path) -> None:
