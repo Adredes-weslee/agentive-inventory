@@ -11,7 +11,7 @@ import requests
 import yaml
 import streamlit as st
 
-from ..utils.api import get_headers
+from utils.api import get_headers
 SETTINGS_PATH = os.path.join(os.path.dirname(__file__), "..", "..", "configs", "settings.yaml")
 THRESHOLDS_PATH = os.path.join(os.path.dirname(__file__), "..", "..", "configs", "thresholds.yaml")
 API_URL = os.getenv("API_URL", "http://localhost:8000/api/v1")

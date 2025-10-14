@@ -14,7 +14,7 @@ import streamlit as st
 import pandas as pd
 import altair as alt
 
-from ..utils.api import get_headers
+from utils.api import get_headers
 
 API_URL = os.getenv("API_URL", "http://localhost:8000/api/v1")
 
