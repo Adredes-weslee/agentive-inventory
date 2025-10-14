@@ -90,7 +90,7 @@
         "operation": "post",
         "authentication": "accessToken",
         "channel": "#approvals",
-        "text": "Recommendation for {{$json.sku_id}}: order {{$json.order_qty}}.\nApprove: {{$env.WEB_BASE}}/approval?decision=approve&sku={{$json.sku_id}}&qty={{$json.order_qty}}\nReject: {{$env.WEB_BASE}}/approval?decision=reject&sku={{$json.sku_id}}&qty={{$json.order_qty}}"
+        "text": "Recommendation for {{$json.sku_id}}: order {{$json.order_qty}}.\nApprove: {{$env.WEB_BASE}}/approval?decision=approve&sku={{$json.sku_id}}&qty={{$json.order_qty}}&reason=Approved%20via%20Slack\nReject: {{$env.WEB_BASE}}/approval?decision=reject&sku={{$json.sku_id}}&qty={{$json.order_qty}}&reason=Rejected%20via%20Slack"
       }
     },
     {
@@ -122,7 +122,8 @@
         "body": {
           "sku_id": "={{$json.query.sku}}",
           "action": "={{$json.query.decision}}",
-          "qty": "={{$json.query.qty}}"
+          "qty": "={{$json.query.qty}}",
+          "reason": "={{$json.query.reason || 'Decision captured via Slack link'}}"
         }
       }
     }
