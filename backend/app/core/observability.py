@@ -167,6 +167,13 @@ except ImportError:  # pragma: no cover - fallback implementation
 
     Counter = _FallbackCounter
     Histogram = _FallbackHistogram
+
+    # ---- Typing/IDE friendliness -----------------------------------------
+    # Inner class annotations sometimes referenced the private fallback
+    # names. Re-alias them to the public classes so that editors and static
+    # analyzers resolve the types cleanly without changing runtime behavior.
+    _FallbackCounter = Counter
+    _FallbackHistogram = Histogram
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import PlainTextResponse, Response
