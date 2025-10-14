@@ -10,7 +10,7 @@ import time
 import uuid
 from collections import defaultdict, deque
 from datetime import datetime, timezone
-from typing import Callable, TypeAlias
+from typing import Callable
 
 # Prometheus client is optional in constrained environments. Provide a lightweight
 # fallback so the application can still expose metrics in Prometheus text format.
