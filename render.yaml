@@ -1,38 +1,34 @@
 # infra/render.yaml
 services:
-  # --- FastAPI backend -------------------------------------------------------
+  # --- FastAPI backend (no disk; symlink to repo-root data/configs) ---------
   - type: web
     name: agentive-api
     runtime: python
     rootDir: backend
-    buildCommand: pip install --no-cache-dir -r requirements.txt
+    buildCommand: |
+      pip install --no-cache-dir -r requirements.txt
+      # point backend/data -> ../data (repo root), same for configs
+      ln -sfn ../data data || true
+      ln -sfn ../configs configs || true
     startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /api/v1/health
     envVars:
       - key: LOG_LEVEL
         value: info
-      - key: DATA_DIR
-        value: /data
-      - key: CONFIG_DIR
-        value: /app/configs
-      # lock CORS to your UI origin once UI is up
-      - key: CORS_ORIGINS
-        value: https://agentive-ui.onrender.com
-      # optional features
+      # Optional CORS: lock to your UI origin after the first UI deploy
+      # - key: CORS_ORIGINS
+      #   value: https://agentive-ui.onrender.com
+      # Optional features (leave empty to disable):
       - key: GEMINI_API_KEY
         sync: false
       - key: GEMINI_MODEL
         value: gemini-2.5-flash
-      - key: API_TOKEN                   
+      - key: API_TOKEN
         sync: false
       - key: RATE_LIMIT_PER_MIN
         value: "60"
-    disk:
-      name: agentive-data
-      mountPath: /data
-      sizeGB: 2
 
-  # --- Streamlit UI ----------------------------------------------------------
+  # --- Streamlit UI ---------------------------------------------------------
   - type: web
     name: agentive-ui
     runtime: python
@@ -41,13 +37,12 @@ services:
     startCommand: streamlit run app.py --server.port $PORT --server.address 0.0.0.0
     healthCheckPath: /
     envVars:
-      # set after first deploy if you prefer the final URL
       - key: API_URL
         value: https://agentive-api.onrender.com/api/v1
-      - key: API_TOKEN                   
+      - key: API_TOKEN
         sync: false
 
-  # --- (Optional) n8n orchestration -----------------------------------------
+  # --- (Optional) n8n on free tier (no disk; state will reset on deploy) ----
   - type: web
     name: agentive-n8n
     runtime: docker
@@ -61,13 +56,18 @@ services:
         value: agentive-n8n.onrender.com
       - key: N8N_PORT
         value: "10000"
-      - key: N8N_ENCRYPTION_KEY          # set a random 32+ char string in dashboard
-        sync: false
-      - key: WEBHOOK_URL                 # helps external webhooks work
+      - key: WEBHOOK_URL
         value: https://agentive-n8n.onrender.com/
-      - key: API_URL                     # so n8n can call the API
+      - key: API_URL
         value: https://agentive-api.onrender.com/api/v1
-    disk:
-      name: n8n-data
-      mountPath: /home/node/.n8n
-      sizeGB: 1
+      # Protect the UI (recommended)
+      - key: N8N_BASIC_AUTH_ACTIVE
+        value: "true"
+      - key: N8N_BASIC_AUTH_USER
+        sync: false
+      - key: N8N_BASIC_AUTH_PASSWORD
+        sync: false
+      # Encryption key for creds (set in dashboard)
+      - key: N8N_ENCRYPTION_KEY
+        sync: false
+
