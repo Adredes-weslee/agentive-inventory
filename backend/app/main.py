@@ -8,14 +8,24 @@ for readiness/liveness checks.  Configuration is read from environment
 variables and YAML files in `configs/`.
 """
 
-import os
 
 from fastapi import FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
-import os, logging
+import os
+import logging
 from pathlib import Path
-
+from .api.v1 import (
+    approvals,
+    backtest,
+    catalog,
+    configs,
+    data,
+    forecasts,
+    health,
+    procure,
+)
+from .core.observability import TokenAndRateLimitMiddleware, metrics_endpoint
 
 # Load .env from repo root
 try:
@@ -31,17 +41,6 @@ logging.getLogger(__name__).info(
     bool(os.getenv("GEMINI_API_KEY")),
     os.getenv("GEMINI_MODEL", "gemini-2.5-flash"),
 )
-from .api.v1 import (
-    approvals,
-    backtest,
-    catalog,
-    configs,
-    data,
-    forecasts,
-    health,
-    procure,
-)
-from .core.observability import TokenAndRateLimitMiddleware, metrics_endpoint
 
 app = FastAPI(title="Agentive Inventory API", version="0.1.0")
 
