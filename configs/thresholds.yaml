@@ -1,5 +1,5 @@
 # configs\thresholds.yaml
-
+#
 # Guardrails and threshold configuration.
 #
 # These values determine when procurement recommendations should be auto‑approved
