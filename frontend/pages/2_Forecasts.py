@@ -42,22 +42,28 @@ st.title("🔮 Forecasts")
 st.caption("Visualise deterministic forecasts generated from the Walmart M5 dataset.")
 
 examples = _get_catalog_ids(limit=20)
+default_sku = "FOODS_3_090_CA_1_validation"
+sku_state_key = "forecast_form_sku"
+if sku_state_key not in st.session_state:
+    st.session_state[sku_state_key] = examples[0] if examples else default_sku
+
 with st.form(key="forecast_form"):
-    sku = (
-        st.selectbox(
-            "M5 row id (e.g., FOODS_3_090_CA_1_validation)",
-            options=examples,
-            index=0,
-            placeholder="Type/choose an M5 id (not item_id)",
-            help="Enter the M5 *row id* exactly as in the CSV id column.",
-        )
-        if examples
-        else st.text_input(
-            "M5 row id",
-            value="FOODS_3_090_CA_1_validation",
-            help="Enter the M5 *row id*, not item_id. Example: FOODS_3_090_CA_1_validation",
-        )
+    sku_input = st.text_input(
+        "M5 row id",
+        key=sku_state_key,
+        help="Enter the M5 *row id*, not item_id. Example: FOODS_3_090_CA_1_validation",
     )
+    if examples:
+        suggestion = st.selectbox(
+            "Cached ids (optional)",
+            options=["Type your own id", *examples],
+            index=0,
+            help="Select a cached id or continue typing to use any valid M5 row id.",
+        )
+        if suggestion != "Type your own id" and st.session_state[sku_state_key] != suggestion:
+            st.session_state[sku_state_key] = suggestion
+            sku_input = suggestion
+    sku = sku_input.strip()
     horizon = st.slider(
         "Horizon (days)",
         min_value=7,
