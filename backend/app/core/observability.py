@@ -165,8 +165,8 @@ except ImportError:  # pragma: no cover - fallback implementation
         payload_lines = [metric.render() for metric in _METRIC_REGISTRY]
         return ("\n".join(payload_lines) + "\n").encode("utf-8")
 
-    Counter = _FallbackCounter
-    Histogram = _FallbackHistogram
+    Counter = _FallbackCounter  # type: ignore[misc]
+    Histogram = _FallbackHistogram  # type: ignore[misc]
 
     # ---- Typing/IDE friendliness -----------------------------------------
     # Inner class annotations sometimes referenced the private fallback
