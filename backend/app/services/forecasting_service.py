@@ -272,27 +272,49 @@ class ForecastingService:
     def _sales_columns_list(self) -> list[str]:
         if self._sales_columns is None:
             path = self._sales_path
-            if not path.exists():
-                self._sales_columns = []
-            else:
+            parquet_path = path.with_suffix(".parquet")
+            if path.exists():
                 header = pd.read_csv(path, nrows=0)
                 self._sales_columns = list(header.columns)
+            elif parquet_path.exists():
+                try:
+                    import pyarrow.parquet as pq  # type: ignore[import-not-found]
+
+                    schema = pq.read_schema(parquet_path)
+                    self._sales_columns = list(schema.names)
+                except Exception:  # pragma: no cover - fallback for narrow installs
+                    df = pd.read_parquet(parquet_path, columns=None)
+                    self._sales_columns = list(df.columns)
+            else:
+                self._sales_columns = []
         return self._sales_columns
 
     # ------------------------------------------------------------------
     def _load_calendar_frame(self) -> pd.DataFrame:
         if self._calendar_df is None:
             path = self._calendar_path
-            if not path.exists():
+            parquet_path = path.with_suffix(".parquet")
+            if not path.exists() and not parquet_path.exists():
                 self._calendar_df = pd.DataFrame()
                 return self._calendar_df
 
-            header = pd.read_csv(path, nrows=0)
             desired = ["d", "date", "event_name_1", "snap_CA", "snap_TX", "snap_WI"]
-            available = [col for col in desired if col in header.columns]
-            usecols = available if available else list(header.columns)
-            dtype = {"d": "string"} if "d" in usecols else None
-            df = load_table(str(path), usecols=usecols, dtype=dtype)
+            usecols: list[str] | None
+            dtype = None
+
+            if path.exists():
+                header = pd.read_csv(path, nrows=0)
+                available = [col for col in desired if col in header.columns]
+                usecols = available if available else list(header.columns)
+                dtype = {"d": "string"} if "d" in usecols else None
+            else:
+                # Parquet only; attempt to request desired columns and fall back if any are missing.
+                usecols = desired
+
+            try:
+                df = load_table(str(path), usecols=usecols, dtype=dtype)
+            except (KeyError, ValueError):  # pragma: no cover - fallback for minimal parquet schemas
+                df = load_table(str(path), usecols=None, dtype=None)
             if "date" in df.columns:
                 df["date"] = pd.to_datetime(df["date"], errors="coerce")
             self._calendar_df = df
@@ -482,7 +504,7 @@ class ForecastingService:
 
     # ------------------------------------------------------------------
     def _ensure_loaded(self) -> None:
-        if not self._sales_path.exists() or not self._calendar_path.exists():
+        if not self._path_available(self._sales_path) or not self._path_available(self._calendar_path):
             raise FileNotFoundError(
                 "M5 dataset files were not found. Expected sales_train_validation.csv and calendar.csv under the data/ directory."
             )
@@ -491,6 +513,11 @@ class ForecastingService:
             raise FileNotFoundError(
                 "Calendar dataset is missing required columns."
             )
+
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _path_available(path: Path) -> bool:
+        return path.exists() or path.with_suffix(".parquet").exists()
 
     # ------------------------------------------------------------------
     def _resolve_sku(self, sku_id: str, n_recent: Optional[int] = None) -> pd.Series:
