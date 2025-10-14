@@ -5,7 +5,7 @@ Streamlit page for running historical forecast backtests."""
 from __future__ import annotations
 
 import os
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import altair as alt
 import pandas as pd
@@ -13,7 +13,37 @@ import requests
 import streamlit as st
 
 from utils.api import get_headers
+
 API_URL = os.getenv("API_URL", "http://localhost:8000/api/v1")
+
+STATE_KEY = "backtest_state"
+
+
+def _persist_state(
+    df: Optional[pd.DataFrame],
+    *,
+    history_df: Optional[pd.DataFrame],
+    coverage_df: Optional[pd.DataFrame],
+    metadata: Dict[str, Any],
+) -> None:
+    state = st.session_state.setdefault(STATE_KEY, {})
+    if df is None or df.empty:
+        state.clear()
+        return
+
+    csv_bytes = df.to_csv(index=False).encode("utf-8")
+    filename = f"backtest_{metadata.get('sku', 'sku')}.csv"
+    state.update(
+        {
+            "df": df,
+            "history_df": history_df,
+            "coverage_df": coverage_df,
+            "csv": csv_bytes,
+            "filename": filename,
+            **metadata,
+        }
+    )
+
 
 st.title("🧪 Backtest")
 
@@ -62,11 +92,13 @@ if submitted:
                 if not dates:
                     st.warning("Backend returned no backtest data for this configuration.")
                 else:
-                    df = pd.DataFrame({
-                        "date": pd.to_datetime(dates),
-                        "y": y,
-                        "yhat": yhat,
-                    })
+                    df = pd.DataFrame(
+                        {
+                            "date": pd.to_datetime(dates),
+                            "y": y,
+                            "yhat": yhat,
+                        }
+                    )
 
                     history_dates = payload.get("history_dates") or []
                     history_values = payload.get("history_values") or []
@@ -79,49 +111,9 @@ if submitted:
                             }
                         )
 
-                    cols = st.columns(3)
-                    with cols[0]:
-                        mape = payload.get("mape")
-                        st.metric(
-                            "MAPE",
-                            "n/a" if mape is None else f"{float(mape) * 100:.2f}%",
-                        )
-                    with cols[1]:
-                        coverage = payload.get("coverage")
-                        st.metric(
-                            "PI coverage",
-                            "n/a" if coverage is None else f"{float(coverage) * 100:.1f}%",
-                        )
-                    with cols[2]:
-                        st.metric("Points", f"{len(df):,}")
-
-                    st.caption(f"Model used: {payload.get('model_used', 'n/a')}")
-
-                    base = alt.Chart(df).encode(x="date:T")
-                    layers = [
-                        base.mark_line(color="#1f77b4").encode(y="y:Q", tooltip=["date", "y"]),
-                        base.mark_line(color="#ff7f0e").encode(
-                            y="yhat:Q", tooltip=["date", "yhat"]
-                        ),
-                    ]
-
-                    if history_df is not None:
-                        history_chart = (
-                            alt.Chart(history_df)
-                            .mark_line(color="#2ca02c", strokeDash=[4, 2], opacity=0.6)
-                            .encode(x="date:T", y="history:Q", tooltip=["date", "history"])
-                        )
-                        layers.append(history_chart)
-
-                    forecast_chart = alt.layer(*layers).interactive()
-                    st.altair_chart(
-                        forecast_chart.properties(title="Forecast vs. actuals with history overlay"),
-                        use_container_width=True,
-                    )
-
                     per_origin = payload.get("per_origin_coverage") or []
+                    coverage_df: Optional[pd.DataFrame] = None
                     if per_origin:
-                        st.write("### Per-origin coverage")
                         coverage_df = pd.DataFrame(
                             {
                                 "Origin": list(range(1, len(per_origin) + 1)),
@@ -129,36 +121,24 @@ if submitted:
                             }
                         )
                         coverage_df["Trend"] = [
-                            coverage_df.loc[: index, "Coverage"].tolist()
-                            for index in coverage_df.index
+                            coverage_df.loc[: idx, "Coverage"].tolist()
+                            for idx in coverage_df.index
                         ]
 
-                        st.dataframe(
-                            coverage_df,
-                            use_container_width=True,
-                            column_config={
-                                "Origin": st.column_config.NumberColumn("Origin", format="%d"),
-                                "Coverage": st.column_config.ProgressColumn(
-                                    "Coverage",
-                                    format="{:.0%}",
-                                    min_value=0.0,
-                                    max_value=1.0,
-                                ),
-                                "Trend": st.column_config.LineChartColumn(
-                                    "Trend",
-                                    y_min=0.0,
-                                    y_max=1.0,
-                                ),
-                            },
-                            hide_index=True,
-                        )
-
-                    csv_data = df.to_csv(index=False).encode("utf-8")
-                    st.download_button(
-                        "Download CSV",
-                        data=csv_data,
-                        file_name=f"backtest_{sku}.csv",
-                        mime="text/csv",
+                    _persist_state(
+                        df,
+                        history_df=history_df,
+                        coverage_df=coverage_df,
+                        metadata={
+                            "sku": sku,
+                            "window": int(window),
+                            "horizon": int(horizon),
+                            "step": int(step),
+                            "model": model,
+                            "mape": payload.get("mape"),
+                            "coverage": payload.get("coverage"),
+                            "model_used": payload.get("model_used"),
+                        },
                     )
             else:
                 try:
@@ -166,5 +146,70 @@ if submitted:
                 except ValueError:
                     detail = response.text
                 st.error(f"Backtest failed ({response.status_code}): {detail}")
+
+state: Dict[str, Any] = st.session_state.get(STATE_KEY, {})
+df: Optional[pd.DataFrame] = state.get("df")
+
+if df is not None and not df.empty:
+    cols = st.columns(3)
+    with cols[0]:
+        mape = state.get("mape")
+        st.metric("MAPE", "n/a" if mape is None else f"{float(mape) * 100:.2f}%")
+    with cols[1]:
+        coverage = state.get("coverage")
+        st.metric(
+            "PI coverage",
+            "n/a" if coverage is None else f"{float(coverage) * 100:.1f}%",
+        )
+    with cols[2]:
+        st.metric("Points", f"{len(df):,}")
+
+    st.caption(f"Model used: {state.get('model_used', 'n/a')}")
+
+    base = alt.Chart(df).encode(x="date:T")
+    layers = [
+        base.mark_line(color="#1f77b4").encode(y="y:Q", tooltip=["date", "y"]),
+        base.mark_line(color="#ff7f0e").encode(y="yhat:Q", tooltip=["date", "yhat"]),
+    ]
+
+    history_df: Optional[pd.DataFrame] = state.get("history_df")
+    if history_df is not None and not history_df.empty:
+        history_chart = (
+            alt.Chart(history_df)
+            .mark_line(color="#2ca02c", strokeDash=[4, 2], opacity=0.6)
+            .encode(x="date:T", y="history:Q", tooltip=["date", "history"])
+        )
+        layers.append(history_chart)
+
+    forecast_chart = alt.layer(*layers).interactive()
+    st.altair_chart(
+        forecast_chart.properties(title="Forecast vs. actuals with history overlay"),
+        use_container_width=True,
+    )
+
+    coverage_df: Optional[pd.DataFrame] = state.get("coverage_df")
+    if coverage_df is not None and not coverage_df.empty:
+        st.write("### Per-origin coverage")
+        st.dataframe(
+            coverage_df,
+            use_container_width=True,
+            column_config={
+                "Origin": st.column_config.NumberColumn("Origin", format="%d"),
+                "Coverage": st.column_config.ProgressColumn(
+                    "Coverage", format="{:.0%}", min_value=0.0, max_value=1.0
+                ),
+                "Trend": st.column_config.LineChartColumn("Trend", y_min=0.0, y_max=1.0),
+            },
+            hide_index=True,
+        )
+
+    st.download_button(
+        "Download CSV",
+        data=state.get("csv", b""),
+        file_name=state.get("filename", "backtest.csv"),
+        mime="text/csv",
+        disabled=not bool(state.get("csv")),
+        key=f"dl::{state.get('sku', '')}_{state.get('horizon', '')}",
+    )
 else:
     st.info("Submit the form to run a backtest.")
