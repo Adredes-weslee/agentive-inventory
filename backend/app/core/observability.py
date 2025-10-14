@@ -10,7 +10,7 @@ import time
 import uuid
 from collections import defaultdict, deque
 from datetime import datetime, timezone
-from typing import Callable
+from typing import Callable, TypeAlias
 
 # Prometheus client is optional in constrained environments. Provide a lightweight
 # fallback so the application can still expose metrics in Prometheus text format.
@@ -172,8 +172,9 @@ except ImportError:  # pragma: no cover - fallback implementation
     # Inner class annotations sometimes referenced the private fallback
     # names. Re-alias them to the public classes so that editors and static
     # analyzers resolve the types cleanly without changing runtime behavior.
-    _FallbackCounter = Counter  # type: ignore[misc]
-    _FallbackHistogram = Histogram  # type: ignore[misc]
+    _FallbackCounter: TypeAlias = Counter
+    _FallbackHistogram: TypeAlias = Histogram
+    
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import PlainTextResponse, Response
