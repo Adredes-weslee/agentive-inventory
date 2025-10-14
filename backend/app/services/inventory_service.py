@@ -182,12 +182,23 @@ class InventoryService:
         """Return a proxy unit cost using median sell price data."""
 
         fallback_cost = 10.0
-        store_id = None
+        store_id: Optional[str] = None
+        lookup_item_id: Optional[str] = None
+
+        # Prefer metadata from the sales table when available
         sku_info = self.get_sku_info(sku_id)
         if sku_info:
+            lookup_item_id = sku_info.get("item_id") or None
             store_id = sku_info.get("store_id")
 
-        price_series = self._get_price_series(sku_id, store_id)
+        # Fallback: parse composite identifiers from the SKU id itself
+        if lookup_item_id is None:
+            parsed_item, parsed_store = self._parse_ids(sku_id)
+            lookup_item_id = parsed_item
+            store_id = store_id or parsed_store
+
+        # Price data is keyed by item identifier, not the composite row id
+        price_series = self._get_price_series(lookup_item_id or sku_id, store_id)
         if price_series is None or price_series.empty:
             LOGGER.warning(
                 "Falling back to default unit cost for SKU %s; median price unavailable.",
@@ -241,12 +252,20 @@ class InventoryService:
         """Estimate a sell price using historical mean and configured margin uplift."""
 
         margin_rate = float(self.settings.get("gross_margin_rate", 0.0))
-        store_id = None
+        store_id: Optional[str] = None
+        lookup_item_id: Optional[str] = None
+
         sku_info = self.get_sku_info(sku_id)
         if sku_info:
+            lookup_item_id = sku_info.get("item_id") or None
             store_id = sku_info.get("store_id")
 
-        price_series = self._get_price_series(sku_id, store_id)
+        if lookup_item_id is None:
+            parsed_item, parsed_store = self._parse_ids(sku_id)
+            lookup_item_id = parsed_item
+            store_id = store_id or parsed_store
+
+        price_series = self._get_price_series(lookup_item_id or sku_id, store_id)
         if price_series is None or price_series.empty:
             LOGGER.warning(
                 "Sell price data unavailable for SKU %s; deriving price from unit cost.",
