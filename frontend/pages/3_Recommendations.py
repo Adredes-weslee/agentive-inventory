@@ -57,7 +57,26 @@ def _explain_recommendations(
         if exc.response is not None and exc.response.status_code == 404:
             st.info("Explanation service unavailable; showing heuristic summary instead.")
         else:
-            detail = exc.response.json().get("detail") if exc.response is not None else str(exc)
+            if exc.response is not None:
+                try:
+                    data = exc.response.json()
+                except (ValueError, requests.exceptions.JSONDecodeError):
+                    detail = (
+                        exc.response.text.strip()
+                        or exc.response.reason
+                        or str(exc)
+                    )
+                else:
+                    if isinstance(data, dict):
+                        detail = (
+                            data.get("detail")
+                            or data.get("message")
+                            or str(data)
+                        )
+                    else:
+                        detail = str(data)
+            else:
+                detail = str(exc)
             st.warning(
                 f"Explanation service returned an error: {detail}. Showing heuristic summary instead."
             )
