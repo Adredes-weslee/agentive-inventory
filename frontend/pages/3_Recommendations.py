@@ -173,31 +173,47 @@ def _render_recommendation_view(body: Dict[str, Any], recommendations: List[Dict
     approval_state = st.session_state.setdefault(approval_state_key, {"completed_action": None})
     interaction_disabled = approval_state.get("completed_action") is not None
 
-    with st.form(f"approval_form::{body['sku_id']}", clear_on_submit=False):
-        with st.expander("Approval workflow", expanded=requires_approval and not interaction_disabled):
-            provide_override = st.checkbox(
-                "Provide quantity override",
-                value=False if recommended_qty is not None else True,
-                disabled=interaction_disabled,
-                key=f"approval_qty_override::{body['sku_id']}",
-            )
+    override_key = f"approval_qty_override::{body['sku_id']}"
+    qty_key = f"approval_qty_input::{body['sku_id']}"
+    reason_key = f"approval_reason::{body['sku_id']}"
+
+    if override_key not in st.session_state:
+        st.session_state[override_key] = recommended_qty is None
+
+    with st.expander("Approval workflow", expanded=requires_approval and not interaction_disabled):
+        provide_override = st.checkbox(
+            "Provide quantity override",
+            disabled=interaction_disabled,
+            key=override_key,
+        )
+
+        with st.form(f"approval_form::{body['sku_id']}", clear_on_submit=False):
+            provide_override = bool(st.session_state.get(override_key))
             if provide_override:
+                default_qty = st.session_state.get(qty_key)
+                if default_qty is None:
+                    if recommended_qty is not None and recommended_qty >= 0:
+                        default_qty = int(recommended_qty)
+                    else:
+                        default_qty = 0
                 qty = st.number_input(
                     "Override qty",
                     min_value=0,
-                    value=(recommended_qty if (recommended_qty is not None and recommended_qty >= 0) else 0),
+                    value=int(default_qty),
                     step=1,
                     disabled=interaction_disabled,
-                    key=f"approval_qty_input::{body['sku_id']}",
+                    key=qty_key,
                 )
             else:
+                st.session_state.pop(qty_key, None)
                 qty = max(int(recommended_qty or 0), 0)
+                st.caption(f"Using recommended quantity: {qty}")
 
             note = st.text_input(
                 "Reason / note",
                 value="",
                 disabled=interaction_disabled,
-                key=f"approval_reason::{body['sku_id']}",
+                key=reason_key,
             )
 
             col_a, col_b = st.columns(2)
