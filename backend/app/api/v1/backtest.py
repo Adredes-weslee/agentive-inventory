@@ -86,8 +86,17 @@ def backtest(
 
     if cv != "none":
         sales_df = _inventory_service.sales_df
-        info = _inventory_service.get_sku_info(sku_id)
         key_column = "store_id" if cv == "store" else "cat_id"
+        if sales_df is None:
+            columns = ["id", "item_id", key_column]
+            try:
+                sales_df = _inventory_service.load_sales(columns=columns)
+            except FileNotFoundError:
+                sales_df = None
+            except Exception:  # pragma: no cover - defensive sampling fallback
+                LOGGER.warning("Unable to load sales data for peer sampling during backtest")
+                sales_df = None
+        info = _inventory_service.get_sku_info(sku_id)
         key_value = info.get(key_column) if info else None
         if sales_df is not None and key_value is not None and key_column in sales_df.columns:
             peers_df = sales_df[sales_df[key_column] == key_value]

@@ -7,9 +7,10 @@ from __future__ import annotations
 import logging
 import math
 import os
+from pathlib import Path
 from dataclasses import dataclass
 from functools import lru_cache
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Iterable, Optional
 
 try:  # pragma: no cover - optional dependency
     import yaml
@@ -37,77 +38,148 @@ class InventoryService:
     """Provide SKU metadata, unit cost estimates and inventory placeholders."""
 
     def __init__(self, data_root: str = "data", config_root: Optional[str] = None) -> None:
-        self.data_root = data_root
-        self.config_root = config_root or "configs"
+        self.data_root = Path(os.getenv("DATA_DIR", data_root))
+        self.config_root = Path(config_root or "configs")
         self.sales_df: Optional[pd.DataFrame] = None
         self.prices_df: Optional[pd.DataFrame] = None
-        self.settings: Dict[str, Any] = {}
-        self._load()
-        self._load_settings()
+        self._settings_cache: Optional[Dict[str, Any]] = None
 
     # ------------------------------------------------------------------
-    def _load(self) -> None:
-        sales_path = os.path.join(self.data_root, "sales_train_validation.csv")
-        prices_path = os.path.join(self.data_root, "sell_prices.csv")
+    def _sales_path(self) -> Path:
+        return self.data_root / "sales_train_validation.csv"
 
-        if os.path.exists(sales_path):
-            try:
-                self.sales_df = prefer_parquet(sales_path)
-            except Exception as exc:  # pragma: no cover - defensive logging only
-                LOGGER.warning("Unable to load sales dataset at %s: %s", sales_path, exc)
-                self.sales_df = None
+    def _prices_path(self) -> Path:
+        return self.data_root / "sell_prices.csv"
 
-        if os.path.exists(prices_path):
-            try:
-                self.prices_df = prefer_parquet(prices_path)
-            except Exception as exc:  # pragma: no cover - defensive logging only
-                LOGGER.warning("Unable to load sell prices dataset at %s: %s", prices_path, exc)
-                self.prices_df = None
+    def _calendar_path(self) -> Path:
+        return self.data_root / "calendar.csv"
+
+    def data_files_present(self) -> bool:
+        return self._sales_path().exists() and self._prices_path().exists() and self._calendar_path().exists()
 
     # ------------------------------------------------------------------
-    def _load_settings(self) -> None:
+    def _load_settings(self) -> Dict[str, Any]:
         default_settings: Dict[str, Any] = {
             "lead_time_days": 7,
             "gross_margin_rate": 0.0,
             "lead_time_overrides": {},
         }
 
-        settings_path = os.path.join(self.config_root, "settings.yaml")
-        self.settings = default_settings.copy()
+        settings_path = self.config_root / "settings.yaml"
+        settings = default_settings.copy()
 
-        if not os.path.exists(settings_path):
+        if not settings_path.exists():
             LOGGER.debug("Settings file not found at %s; using defaults.", settings_path)
-            return
+            return settings
 
         if yaml is None:
             LOGGER.warning("PyYAML is not installed; unable to read %s. Using defaults.", settings_path)
-            return
+            return settings
 
         try:
             with open(settings_path, "r", encoding="utf-8") as fh:
                 loaded = yaml.safe_load(fh) or {}
         except Exception as exc:  # pragma: no cover - defensive logging only
             LOGGER.warning("Unable to load settings from %s: %s", settings_path, exc)
-            return
+            return settings
 
         if isinstance(loaded, dict):
             for key, value in loaded.items():
                 if value is not None:
-                    self.settings[key] = value
+                    settings[key] = value
         else:  # pragma: no cover - defensive logging only
             LOGGER.warning("Settings at %s are not a mapping; using defaults.", settings_path)
+
+        return settings
+
+    def _settings(self) -> Dict[str, Any]:
+        if self._settings_cache is None:
+            self._settings_cache = self._load_settings()
+        return self._settings_cache
+
+    # ------------------------------------------------------------------
+    def load_sales(
+        self,
+        *,
+        columns: Optional[Iterable[str]] = None,
+        dtype: Optional[Dict[str, Any]] = None,
+        **csv_kwargs: Any,
+    ) -> pd.DataFrame:
+        path = self._sales_path()
+        if not path.exists():
+            raise FileNotFoundError(f"Sales dataset not found at {path}")
+        return prefer_parquet(path, columns=columns, dtype=dtype, **csv_kwargs)
+
+    def load_prices(
+        self,
+        *,
+        columns: Optional[Iterable[str]] = None,
+        dtype: Optional[Dict[str, Any]] = None,
+        **csv_kwargs: Any,
+    ) -> pd.DataFrame:
+        path = self._prices_path()
+        if not path.exists():
+            raise FileNotFoundError(f"Sell prices dataset not found at {path}")
+        return prefer_parquet(path, columns=columns, dtype=dtype, **csv_kwargs)
+
+    def _ensure_sales_df(self) -> Optional[pd.DataFrame]:
+        if self.sales_df is not None:
+            return self.sales_df
+
+        try:
+            self.sales_df = self.load_sales()
+        except FileNotFoundError:
+            self.sales_df = None
+        except Exception as exc:  # pragma: no cover - defensive logging only
+            LOGGER.warning("Unable to load sales dataset at %s: %s", self._sales_path(), exc)
+            self.sales_df = None
+        return self.sales_df
+
+    def _ensure_prices_df(self) -> Optional[pd.DataFrame]:
+        if self.prices_df is not None:
+            return self.prices_df
+
+        try:
+            prices = self.load_prices()
+        except FileNotFoundError:
+            prices = None
+        except Exception as exc:  # pragma: no cover - defensive logging only
+            LOGGER.warning("Unable to load sell prices dataset at %s: %s", self._prices_path(), exc)
+            prices = None
+
+        if prices is not None and not prices.empty and "wm_yr_wk" in prices.columns:
+            with pd.option_context("mode.copy_on_write", True):
+                prices = prices.copy()
+                try:
+                    prices["wm_yr_wk"] = prices["wm_yr_wk"].astype(int)
+                except Exception:  # pragma: no cover - dtype coercion guard
+                    pass
+
+        self.prices_df = prices
+        return self.prices_df
 
     # ------------------------------------------------------------------
     def has_sku(self, sku_id: str) -> bool:
         """Return ``True`` when the SKU exists in the sales dataset."""
 
-        if self.sales_df is None:
-            return False
+        frame: Optional[pd.DataFrame] = self.sales_df
+
+        if frame is None:
+            try:
+                frame = self.load_sales(columns=["id", "item_id"], dtype={"id": "string", "item_id": "string"})
+            except FileNotFoundError:
+                return False
+            except Exception:  # pragma: no cover - defensive logging only
+                LOGGER.warning("Unable to evaluate SKU existence for %s", sku_id)
+                return False
 
         try:
-            has_row_id = "id" in self.sales_df.columns and (self.sales_df["id"] == sku_id).any()
-            has_item = "item_id" in self.sales_df.columns and (self.sales_df["item_id"] == sku_id).any()
-            return bool(has_row_id or has_item)
+            candidates = []
+            if "id" in frame.columns:
+                candidates.append(frame["id"].astype(str) == str(sku_id))
+            if "item_id" in frame.columns:
+                candidates.append(frame["item_id"].astype(str) == str(sku_id))
+            return any(series.any() for series in candidates)
         except Exception:  # pragma: no cover - defensive logging only
             LOGGER.warning("Unable to evaluate SKU existence for %s", sku_id)
             return False
@@ -118,14 +190,22 @@ class InventoryService:
 
     # ------------------------------------------------------------------
     def get_sku_info(self, sku_id: str) -> Dict[str, Any]:
-        if self.sales_df is None:
-            return {}
-        df = self.sales_df
+        columns = ["id", "item_id", "dept_id", "cat_id", "store_id", "state_id"]
+        df: Optional[pd.DataFrame] = self.sales_df
+        if df is None:
+            try:
+                df = self.load_sales(columns=columns)
+            except FileNotFoundError:
+                return {}
+            except Exception:  # pragma: no cover - defensive logging only
+                LOGGER.warning("Unable to read SKU info for %s", sku_id)
+                return {}
+
         row = pd.DataFrame()
         if "id" in df.columns:
-            row = df[df["id"] == sku_id]
+            row = df[df["id"].astype(str) == str(sku_id)]
         if row.empty and "item_id" in df.columns:
-            row = df[df["item_id"] == sku_id]
+            row = df[df["item_id"].astype(str) == str(sku_id)]
         if row.empty:
             return {}
         rec = row.iloc[0]
@@ -148,10 +228,11 @@ class InventoryService:
     def get_latest_price(self, sku_id: str) -> Optional[SKUPrice]:
         """Return the most recent sell price for the SKU."""
 
-        if self.prices_df is None:
+        prices = self._ensure_prices_df()
+        if prices is None:
             return None
 
-        sku_prices = self.prices_df[self.prices_df["item_id"] == sku_id]
+        sku_prices = prices[prices["item_id"] == sku_id]
         if sku_prices.empty:
             return None
 
@@ -165,10 +246,11 @@ class InventoryService:
 
     # ------------------------------------------------------------------
     def _get_price_series(self, sku_id: str, store_id: Optional[str] = None) -> Optional[pd.Series]:
-        if self.prices_df is None:
+        prices = self._ensure_prices_df()
+        if prices is None:
             return None
 
-        sku_prices = self.prices_df[self.prices_df["item_id"] == sku_id]
+        sku_prices = prices[prices["item_id"] == sku_id]
         if sku_prices.empty:
             return pd.Series(dtype=float)
 
@@ -223,8 +305,9 @@ class InventoryService:
     def get_lead_time_days(self, sku_id: str) -> int:
         """Return supplier lead time with optional category overrides."""
 
-        default_lead_time = int(self.settings.get("lead_time_days", 7))
-        overrides = self.settings.get("lead_time_overrides", {})
+        settings = self._settings()
+        default_lead_time = int(settings.get("lead_time_days", 7))
+        overrides = settings.get("lead_time_overrides", {})
         lead_time = default_lead_time
 
         if isinstance(overrides, dict) and overrides:
@@ -253,7 +336,7 @@ class InventoryService:
     def get_price(self, sku_id: str) -> float:
         """Estimate a sell price using historical mean and configured margin uplift."""
 
-        margin_rate = float(self.settings.get("gross_margin_rate", 0.0))
+        margin_rate = float(self._settings().get("gross_margin_rate", 0.0))
         store_id: Optional[str] = None
         lookup_item_id: Optional[str] = None
 
@@ -310,7 +393,8 @@ class InventoryService:
     def get_unit_price(self, sku_id: str) -> Optional[float]:
         """Return the median historical sell price for the SKU's item."""
 
-        if self.prices_df is None or self.prices_df.empty:
+        prices = self._ensure_prices_df()
+        if prices is None or prices.empty:
             return None
 
         item_id, store_id = self._parse_ids(sku_id)
@@ -323,7 +407,7 @@ class InventoryService:
             return None
 
         try:
-            price_rows = self.prices_df[self.prices_df["item_id"] == item_id]
+            price_rows = prices[prices["item_id"] == item_id]
         except KeyError:  # pragma: no cover - defensive branch
             return None
 
@@ -352,10 +436,9 @@ class InventoryService:
         if horizon_days <= 0:
             return 1.0
 
-        if self.sales_df is None or self.sales_df.empty:
+        df = self._ensure_sales_df()
+        if df is None or df.empty:
             return 1.0
-
-        df = self.sales_df
         row = pd.DataFrame()
         if "id" in df.columns:
             row = df[df["id"] == sku_id]

@@ -58,7 +58,7 @@ def _validate_sku(sku_id: str) -> None:
     """Ensure the SKU exists before processing recommendations."""
 
     has_sku = getattr(_inventory_service, "has_sku", _inventory_service.sku_exists)
-    if getattr(_inventory_service, "sales_df", None) is None:
+    if not _inventory_service.data_files_present():
         LOGGER.error(
             "Inventory datasets missing while validating procurement request for sku_id=%s",
             sku_id,
