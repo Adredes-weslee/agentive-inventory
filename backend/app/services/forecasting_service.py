@@ -164,8 +164,9 @@ class ForecastingService:
         config_root: str = "configs",
         moving_average_window: int | None = None,
     ) -> None:
-        self.data_root = data_root
-        self.config_root = config_root
+        data_dir = Path(os.getenv("DATA_DIR", data_root))
+        self.data_root = data_dir
+        self.config_root = Path(config_root)
         self.sma_window = int(moving_average_window or self.DEFAULT_SMA_WINDOW)
         if self.sma_window <= 0:
             raise ValueError("moving_average_window must be a positive integer")
@@ -183,20 +184,18 @@ class ForecastingService:
         self._abc_cache: dict[str, str] = {}
         self._abc_thresholds: tuple[float, float] | None = None
 
-        data_root_path = Path(os.getenv("DATA_DIR", self.data_root))
         models_dir_env = os.getenv("MODELS_DIR")
-        self.models_dir: Path = Path(models_dir_env) if models_dir_env else data_root_path / "models"
+        self.models_dir: Path = Path(models_dir_env) if models_dir_env else self.data_root / "models"
         self._model_cache: dict[str, object] = {}
         self._model_artifacts: dict[str, Path] = {}
 
         # Do NOT pre-load or enumerate models here; keep startup fast.
-        # Configuration and data are loaded eagerly (lightweight).
+        # Configuration is lightweight and loaded eagerly; datasets remain lazy.
         self._load_configuration()
-        self._load_data()
 
     # ------------------------------------------------------------------
     def _load_configuration(self) -> None:
-        settings_path = os.path.join(self.config_root, "settings.yaml")
+        settings_path = self.config_root / "settings.yaml"
         settings = load_yaml(settings_path)
         service_level = float(
             settings.get(
@@ -209,33 +208,61 @@ class ForecastingService:
         self.z_value = NormalDist().inv_cdf(service_level)
 
     # ------------------------------------------------------------------
-    def _load_data(self) -> None:
-        sales_path = os.path.join(self.data_root, "sales_train_validation.csv")
-        calendar_path = os.path.join(self.data_root, "calendar.csv")
-        sell_price_path = os.path.join(self.data_root, "sell_prices.csv")
+    def _sales_path(self) -> Path:
+        return self.data_root / "sales_train_validation.csv"
 
-        if not os.path.exists(sales_path):
-            LOGGER.warning("Sales dataset missing at %s", sales_path)
-        else:
-            self.sales_df = prefer_parquet(sales_path)
+    def _calendar_path(self) -> Path:
+        return self.data_root / "calendar.csv"
 
-        if not os.path.exists(calendar_path):
-            LOGGER.warning("Calendar dataset missing at %s", calendar_path)
-        else:
-            calendar_df = prefer_parquet(calendar_path)
-            calendar_df["date"] = pd.to_datetime(calendar_df["date"], format="%Y-%m-%d")
-            self.calendar_df = calendar_df
-            self.calendar_map = dict(zip(calendar_df["d"], calendar_df["date"]))
+    def _sell_price_path(self) -> Path:
+        return self.data_root / "sell_prices.csv"
 
-        if os.path.exists(sell_price_path):
+    def data_files_present(self) -> bool:
+        return (
+            self._sales_path().exists()
+            and self._calendar_path().exists()
+            and self._sell_price_path().exists()
+        )
+
+    def _ensure_data(self) -> None:
+        sales_path = self._sales_path()
+        if self.sales_df is None:
+            if not sales_path.exists():
+                LOGGER.warning("Sales dataset missing at %s", sales_path)
+            else:
+                try:
+                    self.sales_df = prefer_parquet(sales_path)
+                except Exception:  # pragma: no cover - defensive path
+                    LOGGER.exception("Failed to load sales dataset at %s", sales_path)
+                    self.sales_df = None
+
+        calendar_path = self._calendar_path()
+        if self.calendar_df is None:
+            if not calendar_path.exists():
+                LOGGER.warning("Calendar dataset missing at %s", calendar_path)
+            else:
+                try:
+                    calendar_df = prefer_parquet(calendar_path)
+                    calendar_df["date"] = pd.to_datetime(calendar_df["date"], format="%Y-%m-%d")
+                    self.calendar_df = calendar_df
+                    self.calendar_map = dict(zip(calendar_df["d"], calendar_df["date"]))
+                except Exception:  # pragma: no cover - defensive path
+                    LOGGER.exception("Failed to load calendar dataset at %s", calendar_path)
+                    self.calendar_df = None
+                    self.calendar_map = None
+
+        prices_path = self._sell_price_path()
+        if self.sell_prices_df is None and prices_path.exists():
             try:
-                sell_prices = prefer_parquet(sell_price_path)
-                sell_prices["wm_yr_wk"] = sell_prices["wm_yr_wk"].astype(int)
+                sell_prices = prefer_parquet(prices_path)
+                if "wm_yr_wk" in sell_prices.columns:
+                    sell_prices["wm_yr_wk"] = sell_prices["wm_yr_wk"].astype(int)
                 self.sell_prices_df = sell_prices
             except Exception:  # pragma: no cover - defensive path
-                LOGGER.exception("Failed to load sell price dataset at %s", sell_price_path)
+                LOGGER.exception("Failed to load sell price dataset at %s", prices_path)
+                self.sell_prices_df = None
 
-        if self.sales_df is not None:
+        if self.sales_df is not None and not self._abc_cache:
             self._build_abc_cache()
 
     # ------------------------------------------------------------------
@@ -300,6 +327,7 @@ class ForecastingService:
 
     # ------------------------------------------------------------------
     def _average_demand_for_sku(self, sku_id: str) -> float | None:
+        self._ensure_data()
         if self.sales_df is None:
             return None
 
@@ -330,6 +358,7 @@ class ForecastingService:
 
     # ------------------------------------------------------------------
     def _abc_class_for_sku(self, sku_id: str, series: pd.Series | None = None) -> str | None:
+        self._ensure_data()
         cached = self._abc_cache.get(sku_id)
         if cached:
             return cached
@@ -355,6 +384,7 @@ class ForecastingService:
 
     # ------------------------------------------------------------------
     def _ensure_loaded(self) -> None:
+        self._ensure_data()
         if self.sales_df is None or self.calendar_df is None or self.calendar_map is None:
             raise FileNotFoundError(
                 "M5 dataset files were not found. Expected sales_train_validation.csv and calendar.csv under the data/ directory."

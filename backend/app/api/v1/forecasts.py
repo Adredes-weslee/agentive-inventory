@@ -35,7 +35,7 @@ def _validate_sku(sku_id: str) -> None:
 
     has_sku: Callable[[str], bool]
     has_sku = getattr(_inventory_service, "has_sku", _inventory_service.sku_exists)
-    if getattr(_inventory_service, "sales_df", None) is None:
+    if not _inventory_service.data_files_present():
         LOGGER.error("Inventory datasets missing while validating forecast request for sku_id=%s", sku_id)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
