@@ -17,6 +17,7 @@ from __future__ import annotations
 import importlib.util
 import logging
 import os
+from collections import OrderedDict
 from dataclasses import dataclass
 from datetime import date
 from math import sqrt
@@ -27,6 +28,7 @@ from typing import Iterable, List, Sequence
 import joblib
 import numpy as np
 import pandas as pd
+import pyarrow.dataset as ds
 
 from .io_utils import prefer_parquet
 
@@ -171,9 +173,12 @@ class ForecastingService:
         if self.sma_window <= 0:
             raise ValueError("moving_average_window must be a positive integer")
 
-        self.sales_df: pd.DataFrame | None = None
+        self.sales_df: pd.DataFrame | None = None  # legacy attribute retained for compatibility
+        self._sales_dataset: ds.Dataset | None = None
+        self._demand_columns: list[str] | None = None
+        self._series_cache: "OrderedDict[str, pd.Series]" = OrderedDict()
+        self._series_cache_limit: int = 64
         self.calendar_df: pd.DataFrame | None = None
-        self.sell_prices_df: pd.DataFrame | None = None
         self.calendar_map: dict[str, pd.Timestamp] | None = None
 
         self.service_level: float = 0.95
@@ -226,15 +231,26 @@ class ForecastingService:
 
     def _ensure_data(self) -> None:
         sales_path = self._sales_path()
-        if self.sales_df is None:
-            if not sales_path.exists():
-                LOGGER.warning("Sales dataset missing at %s", sales_path)
-            else:
-                try:
-                    self.sales_df = prefer_parquet(sales_path)
-                except Exception:  # pragma: no cover - defensive path
-                    LOGGER.exception("Failed to load sales dataset at %s", sales_path)
-                    self.sales_df = None
+        if self._sales_dataset is None:
+            parquet_path = sales_path.with_suffix(".parquet")
+            try:
+                if parquet_path.exists():
+                    self._sales_dataset = ds.dataset(parquet_path)
+                elif sales_path.exists():
+                    # Fallback for environments that only have CSV copies available.
+                    self._sales_dataset = ds.dataset(str(sales_path), format="csv")
+                else:
+                    LOGGER.warning("Sales dataset missing at %s", sales_path)
+            except Exception:  # pragma: no cover - defensive path
+                LOGGER.exception("Failed to initialise sales dataset from %s", sales_path)
+                self._sales_dataset = None
+
+        if self._sales_dataset is None and self.sales_df is None and sales_path.exists():
+            try:
+                self.sales_df = prefer_parquet(sales_path)
+            except Exception:  # pragma: no cover - defensive path
+                LOGGER.exception("Failed to load sales dataset at %s", sales_path)
+                self.sales_df = None
 
         calendar_path = self._calendar_path()
         if self.calendar_df is None:
@@ -251,66 +267,110 @@ class ForecastingService:
                     self.calendar_df = None
                     self.calendar_map = None
 
-        prices_path = self._sell_price_path()
-        if self.sell_prices_df is None and prices_path.exists():
-            try:
-                sell_prices = prefer_parquet(prices_path)
-                if "wm_yr_wk" in sell_prices.columns:
-                    sell_prices["wm_yr_wk"] = sell_prices["wm_yr_wk"].astype(int)
-                self.sell_prices_df = sell_prices
-            except Exception:  # pragma: no cover - defensive path
-                LOGGER.exception("Failed to load sell price dataset at %s", prices_path)
-                self.sell_prices_df = None
-
-        if self.sales_df is not None and not self._abc_cache:
+        if self._sales_dataset is not None and not self._abc_cache:
+            self._build_abc_cache()
+        elif self.sales_df is not None and not self._abc_cache:
             self._build_abc_cache()
 
     # ------------------------------------------------------------------
     def _build_abc_cache(self) -> None:
-        assert self.sales_df is not None
+        dataset = self._sales_dataset
+        frame_fallback = self.sales_df
+        if dataset is None and frame_fallback is None:
+            return
 
         self._abc_cache.clear()
         self._abc_thresholds = None
 
-        demand_cols = [c for c in self.sales_df.columns if c.startswith("d_")]
+        if dataset is None and frame_fallback is not None:
+            demand_cols = [c for c in frame_fallback.columns if c.startswith("d_")]
+            if not demand_cols:
+                return
+
+            demand_frame = (
+                frame_fallback[demand_cols]
+                .apply(pd.to_numeric, errors="coerce")
+                .fillna(0.0)
+            )
+            averages = demand_frame.mean(axis=1)
+            if averages.empty:
+                return
+
+            q80 = float(averages.quantile(0.8))
+            q50 = float(averages.quantile(0.5))
+            self._abc_thresholds = (q50, q80)
+
+            id_column: str | None = None
+            for candidate in ("id", "item_id"):
+                if candidate in frame_fallback.columns:
+                    id_column = candidate
+                    break
+
+            if id_column is not None:
+                for sku, avg in zip(frame_fallback[id_column], averages):
+                    cls = self._class_from_average(float(avg))
+                    if cls:
+                        self._abc_cache[str(sku)] = cls
+
+            if "item_id" in frame_fallback.columns:
+                grouped_totals = (
+                    demand_frame.assign(item_id=frame_fallback["item_id"])
+                    .groupby("item_id")
+                    .sum()
+                )
+                for item_id, avg in grouped_totals.mean(axis=1).items():
+                    cls = self._class_from_average(float(avg))
+                    if cls:
+                        self._abc_cache[str(item_id)] = cls
+            return
+
+        assert dataset is not None
+
+        demand_cols = self._get_demand_columns()
         if not demand_cols:
             return
 
-        demand_frame = (
-            self.sales_df[demand_cols]
-            .apply(pd.to_numeric, errors="coerce")
-            .fillna(0.0)
-        )
-        averages = demand_frame.mean(axis=1)
-        if averages.empty:
+        averages: list[float] = []
+        batch_size = 128
+        try:
+            for batch in dataset.to_batches(columns=demand_cols, batch_size=batch_size):
+                demand_frame = batch.to_pandas()
+                if demand_frame.empty:
+                    continue
+                values = demand_frame.to_numpy(dtype="float32", copy=False)
+                batch_means = values.mean(axis=1)
+                averages.extend(float(x) for x in batch_means)
+        except Exception:  # pragma: no cover - defensive guard
+            LOGGER.exception("Failed to compute ABC thresholds from sales dataset")
+            averages.clear()
+
+        if not averages:
             return
 
-        q80 = float(averages.quantile(0.8))
-        q50 = float(averages.quantile(0.5))
-        self._abc_thresholds = (q50, q80)
+        quantiles = np.quantile(np.array(averages, dtype=float), [0.5, 0.8])
+        self._abc_thresholds = (float(quantiles[0]), float(quantiles[1]))
 
-        id_column: str | None = None
-        for candidate in ("id", "item_id"):
-            if candidate in self.sales_df.columns:
-                id_column = candidate
-                break
+        id_columns = [col for col in ("id", "item_id") if col in dataset.schema.names]
+        if not id_columns:
+            return
 
-        if id_column is not None:
-            for sku, avg in zip(self.sales_df[id_column], averages):
-                cls = self._class_from_average(float(avg))
-                if cls:
-                    self._abc_cache[str(sku)] = cls
-
-        if "item_id" in self.sales_df.columns:
-            grouped_totals = (
-                demand_frame.assign(item_id=self.sales_df["item_id"])
-                .groupby("item_id")
-                .sum()
-            )
-            for item_id, avg in grouped_totals.mean(axis=1).items():
-                cls = self._class_from_average(float(avg))
-                if cls:
-                    self._abc_cache[str(item_id)] = cls
+        try:
+            for batch in dataset.to_batches(columns=[*id_columns, *demand_cols], batch_size=batch_size):
+                pdf = batch.to_pandas()
+                if pdf.empty:
+                    continue
+                demand_values = pdf[demand_cols].to_numpy(dtype="float32", copy=False)
+                row_means = demand_values.mean(axis=1)
+                for idx, avg in enumerate(row_means):
+                    cls = self._class_from_average(float(avg))
+                    if not cls:
+                        continue
+                    for column in id_columns:
+                        value = pdf[column].iat[idx]
+                        if value is not None and value == value:  # guard against NaN
+                            self._abc_cache[str(value)] = cls
+        except Exception:  # pragma: no cover - defensive guard
+            LOGGER.exception("Failed to populate ABC cache from sales dataset")
 
     # ------------------------------------------------------------------
     def _class_from_average(self, average: float | None) -> str | None:
@@ -326,35 +386,152 @@ class ForecastingService:
         return "C"
 
     # ------------------------------------------------------------------
-    def _average_demand_for_sku(self, sku_id: str) -> float | None:
-        self._ensure_data()
-        if self.sales_df is None:
-            return None
+    def _get_demand_columns(self) -> list[str]:
+        if self._demand_columns is not None:
+            return self._demand_columns
 
-        demand_cols = [c for c in self.sales_df.columns if c.startswith("d_")]
+        dataset = self._sales_dataset
+        if dataset is None:
+            if self.sales_df is None:
+                return []
+            demand_cols = [name for name in self.sales_df.columns if name.startswith("d_")]
+            self._demand_columns = demand_cols
+            return demand_cols
+
+        demand_cols = [name for name in dataset.schema.names if name.startswith("d_")]
+        self._demand_columns = demand_cols
+        return demand_cols
+
+    # ------------------------------------------------------------------
+    def _get_cached_series(self, sku_id: str) -> pd.Series | None:
+        cache = self._series_cache
+        series = cache.get(sku_id)
+        if series is None:
+            return None
+        cache.move_to_end(sku_id)
+        return series.copy(deep=True)
+
+    # ------------------------------------------------------------------
+    def _cache_series(self, aliases: Iterable[str], series: pd.Series) -> None:
+        cache = self._series_cache
+        for alias in aliases:
+            key = str(alias).strip()
+            if not key:
+                continue
+            if key in cache:
+                cache.move_to_end(key)
+            cache[key] = series
+            cache.move_to_end(key)
+            while len(cache) > self._series_cache_limit:
+                cache.popitem(last=False)
+
+    # ------------------------------------------------------------------
+    def _load_series_for_sku(self, sku_id: str) -> pd.Series | None:
+        cached = self._get_cached_series(sku_id)
+        if cached is not None:
+            return cached
+
+        dataset = self._sales_dataset
+        demand_cols = self._get_demand_columns()
         if not demand_cols:
             return None
 
-        sku_rows = pd.DataFrame()
-        if "id" in self.sales_df.columns:
-            sku_rows = self.sales_df[self.sales_df["id"] == sku_id]
-            if sku_rows.empty and "item_id" in self.sales_df.columns:
-                sku_rows = self.sales_df[self.sales_df["item_id"] == sku_id]
-        elif "item_id" in self.sales_df.columns:
-            sku_rows = self.sales_df[self.sales_df["item_id"] == sku_id]
+        if dataset is None and self.sales_df is not None:
+            frame = self.sales_df
+            if "id" in frame.columns:
+                sku_rows = frame[frame["id"] == sku_id]
+                if sku_rows.empty and "item_id" in frame.columns:
+                    sku_rows = frame[frame["item_id"] == sku_id]
+            elif "item_id" in frame.columns:
+                sku_rows = frame[frame["item_id"] == sku_id]
+            else:
+                sku_rows = pd.DataFrame()
 
-        if sku_rows.empty:
+            if sku_rows.empty:
+                return None
+
+            demand_history = sku_rows[demand_cols].apply(pd.to_numeric, errors="coerce").fillna(0.0)
+            if demand_history.empty:
+                return None
+
+            if len(sku_rows) > 1:
+                demand_series = demand_history.sum(axis=0)
+            else:
+                demand_series = demand_history.iloc[0]
+
+            demand_series = demand_series.astype(float)
+            demand_series.name = sku_id
+
+            aliases: list[str] = []
+            for column in ("id", "item_id"):
+                if column in sku_rows.columns:
+                    col_values = sku_rows[column].dropna()
+                    aliases.extend(str(value) for value in col_values.tolist())
+            if sku_id not in aliases:
+                aliases.append(str(sku_id))
+
+            self._cache_series(aliases, demand_series)
+            return demand_series.copy(deep=True)
+
+        if dataset is None:
             return None
 
-        demand_history = sku_rows[demand_cols].apply(pd.to_numeric, errors="coerce").fillna(0.0)
+        id_columns = [col for col in ("id", "item_id") if col in dataset.schema.names]
+        columns = [*id_columns, *demand_cols]
+
+        table = None
+        filters: list[ds.Expression] = []
+        if "id" in dataset.schema.names:
+            filters.append(ds.field("id") == sku_id)
+        if "item_id" in dataset.schema.names:
+            filters.append(ds.field("item_id") == sku_id)
+
+        for expr in filters:
+            try:
+                table = dataset.to_table(filter=expr, columns=columns)
+            except Exception:  # pragma: no cover - defensive guard
+                continue
+            if table is not None and table.num_rows:
+                break
+
+        if table is None or table.num_rows == 0:
+            return None
+
+        frame = table.to_pandas()
+        demand_cols = [c for c in frame.columns if c.startswith("d_")]
+        if not demand_cols:
+            return None
+
+        demand_history = frame[demand_cols].apply(pd.to_numeric, errors="coerce").fillna(0.0)
         if demand_history.empty:
             return None
 
-        mean_per_row = demand_history.mean(axis=1)
-        if mean_per_row.empty:
-            return None
+        if len(demand_history) > 1:
+            demand_series = demand_history.sum(axis=0)
+        else:
+            demand_series = demand_history.iloc[0]
 
-        return float(mean_per_row.mean())
+        demand_series = demand_series.astype(float)
+        demand_series.name = sku_id
+
+        aliases: list[str] = []
+        for column in id_columns:
+            if column in frame.columns:
+                col_values = frame[column].dropna()
+                aliases.extend(str(value) for value in col_values.tolist())
+        if sku_id not in aliases:
+            aliases.append(str(sku_id))
+
+        self._cache_series(aliases, demand_series)
+
+        return demand_series.copy(deep=True)
+
+    # ------------------------------------------------------------------
+    def _average_demand_for_sku(self, sku_id: str) -> float | None:
+        series = self._load_series_for_sku(sku_id)
+        if series is None or series.empty:
+            return None
+        return float(np.mean(series.astype(float)))
 
     # ------------------------------------------------------------------
     def _abc_class_for_sku(self, sku_id: str, series: pd.Series | None = None) -> str | None:
@@ -385,37 +562,19 @@ class ForecastingService:
     # ------------------------------------------------------------------
     def _ensure_loaded(self) -> None:
         self._ensure_data()
-        if self.sales_df is None or self.calendar_df is None or self.calendar_map is None:
+        if (self._sales_dataset is None and self.sales_df is None) or self.calendar_df is None or self.calendar_map is None:
             raise FileNotFoundError(
                 "M5 dataset files were not found. Expected sales_train_validation.csv and calendar.csv under the data/ directory."
             )
 
     # ------------------------------------------------------------------
     def _resolve_sku(self, sku_id: str) -> pd.Series:
-        assert self.sales_df is not None
-        if "id" in self.sales_df.columns:
-            sku_rows = self.sales_df[self.sales_df["id"] == sku_id]
-            if sku_rows.empty and "item_id" in self.sales_df.columns:
-                sku_rows = self.sales_df[self.sales_df["item_id"] == sku_id]
-        else:
-            sku_rows = self.sales_df[self.sales_df["item_id"] == sku_id]
-
-        if sku_rows.empty:
+        series = self._load_series_for_sku(sku_id)
+        if series is None or series.empty:
             raise ValueError("SKU not found")
-
-        demand_cols = [col for col in sku_rows.columns if col.startswith("d_")]
-        if not demand_cols:
-            raise ValueError(f"No demand history found for SKU '{sku_id}'")
-
-        demand_history = sku_rows[demand_cols].apply(pd.to_numeric, errors="coerce").fillna(0.0)
-        if len(sku_rows) > 1:
-            demand_series = demand_history.sum(axis=0)
-        else:
-            demand_series = demand_history.iloc[0]
-
-        demand_series = demand_series.astype(float)
-        sku_series = pd.Series(demand_series.values, index=demand_cols, name=sku_id)
-        return sku_series.ffill().fillna(0.0)
+        cleaned = series.ffill().fillna(0.0)
+        cleaned.name = series.name or sku_id
+        return cleaned
 
     # ------------------------------------------------------------------
     def _sku_history(self, sku_id: str) -> _SkuHistory:
