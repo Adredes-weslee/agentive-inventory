@@ -165,15 +165,14 @@ class InventoryService:
 
         return self._prices_dataset
 
-    def _ensure_prices_df(self) -> Optional[pd.DataFrame]:
+    def _ensure_prices_df(self, *, allow_dataset: bool = True) -> Optional[pd.DataFrame]:
         if self.prices_df is not None:
             return self.prices_df
 
         # When pyarrow is available we prefer using dataset queries instead of
         # materialising the full table in memory. Only fall back to a pandas
         # frame when absolutely necessary.
-        dataset = self._load_prices_dataset()
-        if dataset is not None:
+        if allow_dataset and self._load_prices_dataset() is not None:
             return None
 
         try:
@@ -230,8 +229,12 @@ class InventoryService:
                     item_id,
                     store_id or "*",
                 )
+                # Reset the dataset guard so the pandas path can materialise the
+                # price frame instead of immediately returning ``None``.
+                self._prices_dataset = None
+                dataset = None
 
-        prices_df = self._ensure_prices_df()
+        prices_df = self._ensure_prices_df(allow_dataset=dataset is not None)
         if prices_df is None or prices_df.empty:
             return pd.DataFrame(columns=columns)
 
