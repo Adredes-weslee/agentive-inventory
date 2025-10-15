@@ -34,7 +34,7 @@ def get_ids(limit: int = Query(20, ge=1, le=1000)) -> dict[str, List[str]]:
             detail=_error("data_unavailable", f"{SALES_PATH} not found. Place M5 CSVs in ./data."),
         )
     try:
-        df = prefer_parquet(SALES_PATH, usecols=["id"])
+        df = prefer_parquet(SALES_PATH, usecols=["id"], nrows=limit)
         ids: List[str] = [str(x) for x in df["id"].dropna().tolist() if str(x).strip()]
 
         if ids:
