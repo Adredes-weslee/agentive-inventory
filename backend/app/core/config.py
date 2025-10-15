@@ -57,12 +57,13 @@ def get_settings() -> Settings:
     return Settings()
 
 
-def load_yaml(file_path: str) -> dict:
+def load_yaml(file_path: str | os.PathLike[str]) -> dict:
     """Load a YAML file from the given path and return its contents.
 
     If the file does not exist, an empty dictionary is returned.
     """
-    if not os.path.exists(file_path):
+    path_str = os.fspath(file_path)
+    if not os.path.exists(path_str):
         return {}
-    with open(file_path, "r", encoding="utf-8") as f:
+    with open(path_str, "r", encoding="utf-8") as f:
         return yaml.safe_load(f) or {}
