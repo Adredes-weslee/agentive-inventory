@@ -18,6 +18,8 @@ except Exception:  # pragma: no cover - optional dependency
 
 import pandas as pd
 
+from backend.app.services.io_utils import prefer_parquet
+
 LOGGER = logging.getLogger(__name__)
 
 
@@ -50,14 +52,14 @@ class InventoryService:
 
         if os.path.exists(sales_path):
             try:
-                self.sales_df = pd.read_csv(sales_path)
+                self.sales_df = prefer_parquet(sales_path)
             except Exception as exc:  # pragma: no cover - defensive logging only
                 LOGGER.warning("Unable to load sales dataset at %s: %s", sales_path, exc)
                 self.sales_df = None
 
         if os.path.exists(prices_path):
             try:
-                self.prices_df = pd.read_csv(prices_path)
+                self.prices_df = prefer_parquet(prices_path)
             except Exception as exc:  # pragma: no cover - defensive logging only
                 LOGGER.warning("Unable to load sell prices dataset at %s: %s", prices_path, exc)
                 self.prices_df = None

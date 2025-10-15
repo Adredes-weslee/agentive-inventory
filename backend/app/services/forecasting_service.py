@@ -28,6 +28,8 @@ import joblib
 import numpy as np
 import pandas as pd
 
+from backend.app.services.io_utils import prefer_parquet
+
 from ..core.config import load_yaml
 from ..models.schemas import ForecastPoint, ForecastResponse
 
@@ -215,19 +217,19 @@ class ForecastingService:
         if not os.path.exists(sales_path):
             LOGGER.warning("Sales dataset missing at %s", sales_path)
         else:
-            self.sales_df = pd.read_csv(sales_path)
+            self.sales_df = prefer_parquet(sales_path)
 
         if not os.path.exists(calendar_path):
             LOGGER.warning("Calendar dataset missing at %s", calendar_path)
         else:
-            calendar_df = pd.read_csv(calendar_path)
+            calendar_df = prefer_parquet(calendar_path)
             calendar_df["date"] = pd.to_datetime(calendar_df["date"], format="%Y-%m-%d")
             self.calendar_df = calendar_df
             self.calendar_map = dict(zip(calendar_df["d"], calendar_df["date"]))
 
         if os.path.exists(sell_price_path):
             try:
-                sell_prices = pd.read_csv(sell_price_path)
+                sell_prices = prefer_parquet(sell_price_path)
                 sell_prices["wm_yr_wk"] = sell_prices["wm_yr_wk"].astype(int)
                 self.sell_prices_df = sell_prices
             except Exception:  # pragma: no cover - defensive path

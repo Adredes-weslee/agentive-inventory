@@ -3,7 +3,7 @@ r"""backend\app\services\validation_service.py"""
 from __future__ import annotations
 
 import os
-import pandas as pd
+from backend.app.services.io_utils import prefer_parquet
 
 REQUIRED_SALES_COLS = ["id", "item_id"]
 REQUIRED_PRICE_COLS = ["item_id", "wm_yr_wk", "sell_price"]
@@ -29,14 +29,14 @@ class ValidationService:
         add("file_prices_exists", os.path.exists(prices), prices)
 
         if os.path.exists(sales):
-            df = pd.read_csv(sales, nrows=3)
+            df = prefer_parquet(sales, nrows=3)
             ok = all(c in df.columns for c in REQUIRED_SALES_COLS) and any(
                 c.startswith("d_") for c in df.columns
             )
             add("sales_columns_ok", ok, f"have: {list(df.columns)[:8]}...")
 
         if os.path.exists(prices):
-            dfp = pd.read_csv(prices, nrows=3)
+            dfp = prefer_parquet(prices, nrows=3)
             ok = all(c in dfp.columns for c in REQUIRED_PRICE_COLS)
             add("prices_columns_ok", ok, f"have: {list(dfp.columns)[:8]}...")
 
