@@ -3,7 +3,7 @@ r"""backend\app\services\validation_service.py"""
 from __future__ import annotations
 
 import os
-from backend.app.services.io_utils import prefer_parquet
+from .io_utils import prefer_parquet
 
 REQUIRED_SALES_COLS = ["id", "item_id"]
 REQUIRED_PRICE_COLS = ["item_id", "wm_yr_wk", "sell_price"]

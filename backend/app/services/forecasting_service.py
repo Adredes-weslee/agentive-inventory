@@ -28,7 +28,7 @@ import joblib
 import numpy as np
 import pandas as pd
 
-from backend.app.services.io_utils import prefer_parquet
+from .io_utils import prefer_parquet
 
 from ..core.config import load_yaml
 from ..models.schemas import ForecastPoint, ForecastResponse

@@ -18,7 +18,7 @@ except Exception:  # pragma: no cover - optional dependency
 
 import pandas as pd
 
-from backend.app.services.io_utils import prefer_parquet
+from .io_utils import prefer_parquet
 
 LOGGER = logging.getLogger(__name__)
 

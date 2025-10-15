@@ -8,7 +8,7 @@ from typing import List
 
 from fastapi import APIRouter, HTTPException, Query, status
 
-from backend.app.services.io_utils import prefer_parquet
+from ...services.io_utils import prefer_parquet
 
 LOGGER = logging.getLogger(__name__)
 router = APIRouter()
