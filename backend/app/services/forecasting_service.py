@@ -17,7 +17,7 @@ from __future__ import annotations
 import importlib.util
 import logging
 import os
-from collections import OrderedDict
+from collections import OrderedDict, defaultdict
 from dataclasses import dataclass
 from datetime import date
 from math import sqrt
@@ -354,6 +354,9 @@ class ForecastingService:
         if not id_columns:
             return
 
+        item_totals: defaultdict[str, float] = defaultdict(float)
+        item_id_column = "item_id" if "item_id" in id_columns else None
+        row_level_columns = [col for col in id_columns if col != item_id_column]
         try:
             for batch in dataset.to_batches(columns=[*id_columns, *demand_cols], batch_size=batch_size):
                 pdf = batch.to_pandas()
@@ -361,16 +364,28 @@ class ForecastingService:
                     continue
                 demand_values = pdf[demand_cols].to_numpy(dtype="float32", copy=False)
                 row_means = demand_values.mean(axis=1)
+                item_ids = pdf[item_id_column] if item_id_column else None
                 for idx, avg in enumerate(row_means):
                     cls = self._class_from_average(float(avg))
                     if not cls:
                         continue
-                    for column in id_columns:
+                    for column in row_level_columns:
                         value = pdf[column].iat[idx]
                         if value is not None and value == value:  # guard against NaN
                             self._abc_cache[str(value)] = cls
+                    if item_ids is not None:
+                        item_value = item_ids.iat[idx]
+                        if item_value is not None and item_value == item_value:
+                            item_totals[str(item_value)] += float(avg)
         except Exception:  # pragma: no cover - defensive guard
             LOGGER.exception("Failed to populate ABC cache from sales dataset")
+            return
+
+        if item_totals:
+            for item_id, aggregated_avg in item_totals.items():
+                cls = self._class_from_average(aggregated_avg)
+                if cls:
+                    self._abc_cache[item_id] = cls
 
     # ------------------------------------------------------------------
     def _class_from_average(self, average: float | None) -> str | None:
