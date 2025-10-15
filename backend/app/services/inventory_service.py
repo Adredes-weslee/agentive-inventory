@@ -19,6 +19,11 @@ except Exception:  # pragma: no cover - optional dependency
 
 import pandas as pd
 
+try:  # pragma: no cover - optional dependency in minimal installs
+    import pyarrow.dataset as ds
+except Exception:  # pragma: no cover - gracefully degrade when pyarrow missing
+    ds = None  # type: ignore[assignment]
+
 from .io_utils import prefer_parquet
 
 LOGGER = logging.getLogger(__name__)
@@ -42,6 +47,7 @@ class InventoryService:
         self.config_root = Path(config_root or "configs")
         self.sales_df: Optional[pd.DataFrame] = None
         self.prices_df: Optional[pd.DataFrame] = None
+        self._prices_dataset: Optional["ds.Dataset"] = None
         self._settings_cache: Optional[Dict[str, Any]] = None
 
     # ------------------------------------------------------------------
@@ -50,6 +56,9 @@ class InventoryService:
 
     def _prices_path(self) -> Path:
         return self.data_root / "sell_prices.csv"
+
+    def _prices_parquet_path(self) -> Path:
+        return self._prices_path().with_suffix(".parquet")
 
     def _calendar_path(self) -> Path:
         return self.data_root / "calendar.csv"
@@ -135,12 +144,48 @@ class InventoryService:
             self.sales_df = None
         return self.sales_df
 
+    def _load_prices_dataset(self) -> Optional["ds.Dataset"]:
+        if ds is None:
+            return None
+
+        if self._prices_dataset is not None:
+            return self._prices_dataset
+
+        parquet_path = self._prices_parquet_path()
+        csv_path = self._prices_path()
+
+        try:
+            if parquet_path.exists():
+                self._prices_dataset = ds.dataset(parquet_path)
+            elif csv_path.exists():
+                self._prices_dataset = ds.dataset(str(csv_path), format="csv")
+        except Exception:  # pragma: no cover - defensive logging only
+            LOGGER.warning("Unable to initialise sell price dataset at %s", csv_path)
+            self._prices_dataset = None
+
+        return self._prices_dataset
+
     def _ensure_prices_df(self) -> Optional[pd.DataFrame]:
         if self.prices_df is not None:
             return self.prices_df
 
+        # When pyarrow is available we prefer using dataset queries instead of
+        # materialising the full table in memory. Only fall back to a pandas
+        # frame when absolutely necessary.
+        dataset = self._load_prices_dataset()
+        if dataset is not None:
+            return None
+
         try:
-            prices = self.load_prices()
+            prices = self.load_prices(
+                columns=["item_id", "store_id", "wm_yr_wk", "sell_price"],
+                dtype={
+                    "item_id": "string",
+                    "store_id": "string",
+                    "wm_yr_wk": "int32",
+                    "sell_price": "float32",
+                },
+            )
         except FileNotFoundError:
             prices = None
         except Exception as exc:  # pragma: no cover - defensive logging only
@@ -157,6 +202,74 @@ class InventoryService:
 
         self.prices_df = prices
         return self.prices_df
+
+    def _load_price_rows(
+        self,
+        item_id: str,
+        store_id: Optional[str] = None,
+    ) -> pd.DataFrame:
+        """Return a filtered price frame for the requested identifiers."""
+
+        dataset = self._load_prices_dataset()
+        columns = ["item_id", "store_id", "wm_yr_wk", "sell_price"]
+
+        if dataset is not None:
+            expr: Optional["ds.Expression"] = None
+            try:
+                expr = ds.field("item_id") == item_id
+                if store_id:
+                    expr = expr & (ds.field("store_id") == store_id)
+                available_columns = [col for col in columns if col in dataset.schema.names]
+                table = dataset.to_table(columns=available_columns, filter=expr)
+                if table is not None and table.num_rows:
+                    frame = table.to_pandas()
+                    return self._normalise_price_frame(frame)
+            except Exception:  # pragma: no cover - defensive guard
+                LOGGER.warning(
+                    "Falling back to pandas filtering for sell prices of %s/%s due to dataset error.",
+                    item_id,
+                    store_id or "*",
+                )
+
+        prices_df = self._ensure_prices_df()
+        if prices_df is None or prices_df.empty:
+            return pd.DataFrame(columns=columns)
+
+        mask = prices_df["item_id"] == item_id
+        if store_id:
+            mask &= prices_df["store_id"] == store_id
+
+        frame = prices_df.loc[mask, columns]
+        return self._normalise_price_frame(frame)
+
+    def _normalise_price_frame(self, frame: pd.DataFrame) -> pd.DataFrame:
+        """Ensure price data uses numeric types for comparisons and sorting."""
+
+        if frame.empty:
+            return frame
+
+        frame = frame.copy()
+        expected = ["item_id", "store_id", "wm_yr_wk", "sell_price"]
+        for column in expected:
+            if column not in frame.columns:
+                frame[column] = pd.NA
+        frame = frame[expected]
+
+        subset = [col for col in ("wm_yr_wk", "sell_price") if col in frame.columns]
+        with pd.option_context("mode.copy_on_write", True):
+            frame = frame.copy()
+            for column in subset:
+                frame[column] = pd.to_numeric(frame[column], errors="coerce")
+
+        frame = frame.dropna(subset=subset) if subset else frame
+
+        dtype_map: dict[str, str | type] = {}
+        if "wm_yr_wk" in frame.columns:
+            dtype_map["wm_yr_wk"] = "int32"
+        if "sell_price" in frame.columns:
+            dtype_map["sell_price"] = "float32"
+
+        return frame.astype(dtype_map) if dtype_map else frame
 
     # ------------------------------------------------------------------
     def has_sku(self, sku_id: str) -> bool:
@@ -228,15 +341,11 @@ class InventoryService:
     def get_latest_price(self, sku_id: str) -> Optional[SKUPrice]:
         """Return the most recent sell price for the SKU."""
 
-        prices = self._ensure_prices_df()
-        if prices is None:
+        frame = self._load_price_rows(sku_id)
+        if frame.empty:
             return None
 
-        sku_prices = prices[prices["item_id"] == sku_id]
-        if sku_prices.empty:
-            return None
-
-        latest = sku_prices.sort_values("wm_yr_wk").iloc[-1]
+        latest = frame.sort_values("wm_yr_wk").iloc[-1]
         return SKUPrice(
             item_id=sku_id,
             store_id=latest.get("store_id"),
@@ -246,20 +355,16 @@ class InventoryService:
 
     # ------------------------------------------------------------------
     def _get_price_series(self, sku_id: str, store_id: Optional[str] = None) -> Optional[pd.Series]:
-        prices = self._ensure_prices_df()
-        if prices is None:
-            return None
+        frame = self._load_price_rows(sku_id, store_id)
+        if frame.empty and store_id:
+            frame = self._load_price_rows(sku_id)
 
-        sku_prices = prices[prices["item_id"] == sku_id]
-        if sku_prices.empty:
+        if frame.empty:
             return pd.Series(dtype=float)
 
-        if store_id:
-            store_prices = sku_prices[sku_prices["store_id"] == store_id]
-            if not store_prices.empty:
-                return store_prices["sell_price"].astype(float)
-
-        return sku_prices["sell_price"].astype(float)
+        series = frame.sort_values("wm_yr_wk")["sell_price"].astype(float)
+        series.index = pd.RangeIndex(len(series))
+        return series
 
     # ------------------------------------------------------------------
     def get_unit_cost(self, sku_id: str) -> float:
@@ -393,10 +498,6 @@ class InventoryService:
     def get_unit_price(self, sku_id: str) -> Optional[float]:
         """Return the median historical sell price for the SKU's item."""
 
-        prices = self._ensure_prices_df()
-        if prices is None or prices.empty:
-            return None
-
         item_id, store_id = self._parse_ids(sku_id)
 
         if item_id is None:
@@ -406,23 +507,14 @@ class InventoryService:
         if item_id is None:
             return None
 
-        try:
-            price_rows = prices[prices["item_id"] == item_id]
-        except KeyError:  # pragma: no cover - defensive branch
+        frame = self._load_price_rows(item_id, store_id)
+        if frame.empty and store_id:
+            frame = self._load_price_rows(item_id)
+
+        if frame.empty:
             return None
 
-        if price_rows.empty:
-            return None
-
-        if store_id and "store_id" in price_rows.columns:
-            store_prices = price_rows[price_rows["store_id"] == store_id]
-            if not store_prices.empty:
-                price_rows = store_prices
-
-        try:
-            median_price = float(price_rows["sell_price"].median())
-        except KeyError:  # pragma: no cover - defensive branch
-            return None
+        median_price = float(frame["sell_price"].median())
 
         if not math.isfinite(median_price) or median_price <= 0:
             return None
