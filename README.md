@@ -14,6 +14,11 @@ This repo ships:
 
 Uses the **M5 Forecasting – Accuracy** dataset (Walmart) as canonical demand history.
 
+> **⚠️ Render memory note**
+>
+> Local runs and Docker Compose are fine. On **Render Free** (≈512 MiB RAM), the API will **OOM** during boot or first request due to M5 data processing.
+> **Use at least the Starter plan** (>=1–2 GiB) for a reliable deployment. The Free tier is not supported for this project’s API.
+
 ---
 
 ## Repository layout
@@ -103,6 +108,7 @@ agentive-inventory/
    └─ n8n_workflows/
       └─ example_workflow.json        # Daily schedule → forecast → recommend
 ```
+
 ---
 
 ## Data (M5)
@@ -152,26 +158,22 @@ conda activate agentive-inventory
 ```
 
 Backend (new PowerShell)
+
 ```powershell
 conda activate agentive-inventory
-# Optional: load settings from .env automatically
-# Also set DATA_DIR/CONFIG_DIR for file paths
 $env:DATA_DIR = ".\data"
 $env:CONFIG_DIR = ".\configs"
-
-# If using auth, ensure the token matches your .env (API_TOKEN=dev-12345 by default)
-# $env:API_TOKEN = "dev-12345"
+# $env:API_TOKEN = "dev-12345"     # if using auth
 
 python -m uvicorn backend.app.main:app --reload --port 8000 --env-file .env
 ```
 
 Frontend (another PowerShell)
+
 ```powershell
 conda activate agentive-inventory
 $env:API_URL = "http://localhost:8000/api/v1"
-
-# If API auth is enabled, provide the same token (or paste it in the UI sidebar)
-# $env:API_TOKEN = "dev-12345"
+# $env:API_TOKEN = "dev-12345"     # if API auth enabled
 
 python -m streamlit run frontend/app.py
 ```
@@ -281,10 +283,12 @@ python -m streamlit run frontend/app.py
   ```
 
 Notes for running tests:
-- Leave GEMINI_API_KEY empty so /procure/recommendations/explain returns 404 (expected by tests).
-- Disable auth: leave API_TOKEN empty (or set API_AUTH_DISABLED=1) so TestClient calls aren’t 401.
+
+* Leave GEMINI_API_KEY empty so /procure/recommendations/explain returns 404 (expected by tests).
+* Disable auth: leave API_TOKEN empty (or set API_AUTH_DISABLED=1) so TestClient calls aren’t 401.
 
 PowerShell (optional):
+
 ```powershell
 Remove-Item Env:GEMINI_API_KEY -ErrorAction SilentlyContinue
 Remove-Item Env:API_TOKEN -ErrorAction SilentlyContinue
@@ -294,18 +298,11 @@ pytest -q
 
 Tests cover forecasts/procure, batch selection, backtesting, catalog IDs, configs, approvals/audit log, data validation, and auth/rate-limit behavior.
 
-## Docker / Compose notes
-
-* **Root compose** (`docker-compose.yml`) reads **`./.env`** automatically.
-* **Infra compose** (`infra/docker-compose.yml`) reads **`../.env`** via `env_file`. Run it from `infra/`.
-
-If you leave `GEMINI_API_KEY` empty, `/procure/recommendations/explain` will return **404** (by design).
-
 ---
 
 ## Render deployment
 
-Two services defined in `infra/render.yaml`:
+Two services defined in `render.yaml`:
 
 * **agentive-api** (rootDir `backend`)
 
@@ -313,11 +310,18 @@ Two services defined in `infra/render.yaml`:
   * Start: `uvicorn app.main:app --host 0.0.0.0 --port $PORT`
   * Env: `GEMINI_API_KEY` (optional), `DATA_DIR=/data`, `CONFIG_DIR=/app/configs`, `API_TOKEN` (optional), `CORS_ORIGINS`
   * Disk: attach a persistent disk (2–5 GB) mounted at `/data` for **audit logs** and **model cache**
+
 * **agentive-ui** (rootDir `frontend`)
 
   * Build: `pip install -r requirements.txt`
   * Start: `streamlit run app.py --server.port $PORT --server.address 0.0.0.0`
   * Env: `API_URL=https://<your-api>.onrender.com/api/v1`
+
+> **⚠️ Memory requirement on Render**
+>
+> The API processes sizable M5 datasets. On **Render Free** (~512 MiB RAM), the service will **run out of memory** at startup or on first request.
+> **Upgrade to Starter (or higher)** to run this project reliably. Free tier is not supported for the API.
+> (Streamlit UI may start on Free, but it depends on the API; without the API on a higher plan, features won’t work.)
 
 ---
 
