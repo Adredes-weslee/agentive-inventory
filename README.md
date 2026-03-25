@@ -1,382 +1,62 @@
-# Agentive Inventory Management System
-
-Agentic, human-in-the-loop inventory planning.
-
-This repo ships:
-
-* **FastAPI** backend for forecasts & procurement (EOQ/ROP + guardrails)
-* **Streamlit** UI (“Human Collaboration Hub”)
-* **Configs** for business context & thresholds
-* **n8n** workflows (daily run + approval loop)
-* **Gemini (optional)** natural-language rationales for recommendations
-* **CI (ruff + mypy + pytest)**, Docker Compose, and Render deploys
-* **Optional API auth + rate-limit**, structured JSON logs, and **/metrics** (Prometheus format)
-
-Uses the **M5 Forecasting – Accuracy** dataset (Walmart) as canonical demand history.
-
-> **⚠️ Render memory note**
->
-> Local runs and Docker Compose are fine. On **Render Free** (≈512 MiB RAM), the API will **OOM** during boot or first request due to M5 data processing.
-> **Use at least the Starter plan** (>=1–2 GiB) for a reliable deployment. The Free tier is not supported for this project’s API.
-
----
-
-## Repository layout
-
-```
-agentive-inventory/
-├─ README.md
-├─ .env.example
-├─ .gitattributes
-├─ .gitignore
-├─ pyproject.toml
-├─ environment.yml                    # conda environment
-├─ docker-compose.yml                 # root compose (uses ./.env)
-├─ render.yaml                        # Render deploys: FastAPI API + Streamlit UI (+ optional n8n); sets env vars and persistent disks
-├─ .github/
-│  └─ workflows/
-│     └─ ci.yml                       # ruff + mypy + pytest + coverage
-├─ configs/
-│  ├─ settings.yaml                   # service-level, lead time, costs, margins
-│  └─ thresholds.yaml                 # auto-approval, min service level, GMROI min
-├─ data/                              # M5 CSVs + runtime artifacts
-│  ├─ calendar.csv
-│  ├─ sales_train_evaluation.csv
-│  ├─ sales_train_validation.csv
-│  ├─ sample_submission.csv
-│  ├─ sell_prices.csv
-│  ├─ approvals_audit_log.jsonl       # approvals audit (created at runtime)
-│  └─ models/                         # joblib cache (created at runtime)
-├─ backend/
-│  ├─ app/
-│  │  ├─ main.py
-│  │  ├─ api/
-│  │  │  └─ v1/
-│  │  │     ├─ __init__.py
-│  │  │     ├─ approvals.py            # POST /approvals; GET /approvals/audit-log
-│  │  │     ├─ backtest.py             # GET /backtest/{sku_id}
-│  │  │     ├─ catalog.py              # GET /catalog/ids
-│  │  │     ├─ configs.py              # GET/PUT /configs/{settings,thresholds}
-│  │  │     ├─ data.py                 # data validation/inspection endpoints
-│  │  │     ├─ forecasts.py            # GET /forecasts/{sku_id}
-│  │  │     ├─ health.py               # GET /health
-│  │  │     └─ procure.py              # POST /procure/*
-│  │  ├─ core/
-│  │  │  ├─ __init__.py
-│  │  │  ├─ config.py
-│  │  │  └─ observability.py           # auth, rate-limit, logs, /metrics
-│  │  ├─ models/
-│  │  │  ├─ __init__.py
-│  │  │  └─ schemas.py
-│  │  └─ services/
-│  │     ├─ __init__.py
-│  │     ├─ forecasting_service.py     # SMA/Prophet/XGBoost + backtests + cache
-│  │     ├─ inventory_service.py       # M5 loaders, unit/price lookup
-│  │     ├─ llm_service.py             # Gemini explanations (optional)
-│  │     ├─ procurement_service.py     # EOQ/ROP + GMROI guardrails
-│  │     └─ validation_service.py      # dataset checks
-│  ├─ tests/                           # pytest suite
-│  │  ├─ __init__.py
-│  │  ├─ test_admin_endpoints.py
-│  │  ├─ test_auth_and_rate.py
-│  │  ├─ test_backtest_api.py
-│  │  ├─ test_batch_procure_api.py
-│  │  ├─ test_catalog_api.py
-│  │  ├─ test_data_validate_api.py
-│  │  ├─ test_forecast_api.py
-│  │  ├─ test_forecasting.py
-│  │  ├─ test_procure_api.py
-│  │  └─ test_procurement.py
-│  ├─ requirements.txt
-│  └─ Dockerfile
-├─ frontend/
-│  ├─ app.py                          # Health banner + API token sidebar
-│  ├─ pages/
-│  │  ├─ 1_Dashboard.py               # KPIs + PI band + CSV export
-│  │  ├─ 2_Forecasts.py               # Typeahead (GET /catalog/ids), CSV export
-│  │  ├─ 3_Recommendations.py         # Explain, Approve/Reject, Batch mode
-│  │  ├─ 4_Settings.py                # Edit + PUT /configs/*
-│  │  ├─ 5_Backtest.py                # Rolling backtest + history overlay
-│  │  └─ 6_Audit_Log.py               # Read /approvals/audit-log
-│  ├─ utils/
-│  │  ├─ __init__.py
-│  │  └─ api.py                       # API client helpers
-│  ├─ requirements.txt
-│  └─ Dockerfile
-└─ orchestration/
-   ├─ README.md
-   └─ n8n_workflows/
-      └─ example_workflow.json        # Daily schedule → forecast → recommend
-```
-
----
-
-## Data (M5)
-
-Download from the **M5 Forecasting – Accuracy** competition and place these CSVs in `./data/`:
-
-* `sales_train_validation.csv`
-* `calendar.csv`
-* `sell_prices.csv`
-
-These are committed.
-
----
-
-## Quick start (local)
-
-### One-command (Docker Compose)
-
-```bash
-# 1) Clone
-git clone <your-repo-url>.git
-cd agentive-inventory
-
-# 2) Put M5 CSVs into ./data/
-#    sales_train_validation.csv, calendar.csv, sell_prices.csv
-
-# 3) (Optional) copy env and edit
-cp .env.example .env
-
-# 4) Bring everything up (API :8000, UI :8501, n8n :5678)
-docker compose up --build
-```
-
-Open:
-
-* UI → [http://localhost:8501](http://localhost:8501)
-* API docs → [http://localhost:8000/docs](http://localhost:8000/docs)
-* Metrics → [http://localhost:8000/metrics](http://localhost:8000/metrics)
-* n8n → [http://localhost:5678](http://localhost:5678)
-
-### Python (conda, no containers)
-
-```powershell
-# Create and activate env (once)
-conda env create -f environment.yml
-conda activate agentive-inventory
-```
-
-Backend (new PowerShell)
-
-```powershell
-conda activate agentive-inventory
-$env:DATA_DIR = ".\data"
-$env:CONFIG_DIR = ".\configs"
-# $env:API_TOKEN = "dev-12345"     # if using auth
-
-python -m uvicorn backend.app.main:app --reload --port 8000 --env-file .env
-```
-
-Frontend (another PowerShell)
-
-```powershell
-conda activate agentive-inventory
-$env:API_URL = "http://localhost:8000/api/v1"
-# $env:API_TOKEN = "dev-12345"     # if API auth enabled
-
-python -m streamlit run frontend/app.py
-```
-
----
-
-## UI overview
-
-* **Dashboard**: KPIs (avg demand, 28-day total, avg PI width), mean + PI band chart, CSV export.
-* **Forecasts**: Typeahead of valid M5 row **`id`** via `/catalog/ids`, caching, CSV export.
-* **Recommendations**: `/procure/recommendations` → recommended order qty + guardrails.
-  Explain via `/procure/recommendations/explain` (Gemini; falls back to a simple heuristic text if configured), Approve/Reject via `/approvals`. Batch tab supports multiselect/pasted lists and optional cash budget.
-* **Settings**: Edit & persist via `PUT /configs/settings` & `PUT /configs/thresholds`.
-* **Backtest**: Rolling-origin metrics via `/backtest` with **history overlay** and model selection.
-* **Audit Log**: Stream of approval events from `/approvals/audit-log`.
-* **Sidebar**: API token box; stored in session and sent as `Authorization: Bearer <token>`.
-
----
-
-## API highlights
-
-* **Forecasts**
-
-  * `GET /api/v1/forecasts/{sku_id}?horizon_days=28`
-* **Backtesting**
-
-  * `GET /api/v1/backtest/{sku_id}?window=56&horizon=28&step=7&model=auto`
-  * Returns arrays (`dates`, `y`, `yhat`), summary metrics (`mape`, `coverage`, `model_used`), per-origin coverage, and recent history (`history_dates`, `history_values`).
-* **Catalog**
-
-  * `GET /api/v1/catalog/ids?limit=20` → sample M5 row ids for typeahead
-* **Procurement**
-
-  * `POST /api/v1/procure/recommendations`
-  * `POST /api/v1/procure/recommendations/explain` → rationale (200 when enabled; **404 when disabled by design**)
-  * `POST /api/v1/procure/batch_recommendations` → batch selection under optional cash budget
-* **Configs**
-
-  * `GET/PUT /api/v1/configs/settings`
-  * `GET/PUT /api/v1/configs/thresholds`
-* **Approvals**
-
-  * `POST /api/v1/approvals` `{sku_id, action: approve|reject, qty, reason}`
-  * `GET /api/v1/approvals/audit-log?limit=100`
-* **Health / Metrics**
-
-  * `GET /api/v1/health`
-  * `GET /metrics` (Prometheus text; works with or without `prometheus_client` thanks to a built-in fallback)
-
-**Response shapes** (abbrev):
-
-* `/forecasts/{sku}` → `{ sku_id, horizon_days, forecast: [{date, mean, lo, hi, model, confidence}] }`
-* `/procure/recommendations` → `[{ sku_id, order_qty, reorder_point, gmroi_delta, confidence, requires_approval }]`
-* `/backtest/{sku}` → `{ dates, y, yhat, mape, coverage, per_origin_coverage, history_dates, history_values, model_used }`
-
----
-
-## Configuration quick reference
-
-* `configs/settings.yaml`
-
-  * `service_level_target`, `lead_time_days`, `carrying_cost_rate`, `order_setup_cost`, `default_unit_cost`, `gross_margin_rate`
-* `configs/thresholds.yaml`
-
-  * `auto_approval_limit`, `min_service_level`, `gmroi_min`
-* `.env` (copy from `.env.example`)
-
-  * API: `API_HOST`, `API_PORT`, `DATA_DIR`, `CONFIG_DIR`, `CORS_ORIGINS`
-  * LLM (optional): `GEMINI_API_KEY` (omit to disable explanations), `GEMINI_MODEL` (e.g. `gemini-1.5-flash`)
-  * Security/limits: `API_TOKEN` (enable auth), `RATE_LIMIT_PER_MIN` (e.g., `60`)
-
-> **Explanation endpoint behavior**
-> If `GEMINI_API_KEY` is **unset**, `/procure/recommendations/explain` returns **404** (expected; tests rely on this).
-> You can opt-in to always return a heuristic explanation with `EXPLAIN_FALLBACK_WHEN_DISABLED=true`.
-
-**Model cache** lives in **`/data/models`** (joblib). Approval audit lives at **`data/audit_log.jsonl`**.
-
----
-
-## Security & observability (optional)
-
-* **Auth**: Set `API_TOKEN` on the API. The UI sidebar sends `Authorization: Bearer …`.
-* **Rate limit**: `RATE_LIMIT_PER_MIN` per-IP sliding window.
-* **CORS**: Restrict `CORS_ORIGINS` to your UI origin(s).
-* **Logs**: Structured JSON per request (`request_id`, `sku_id` (now extracted from POST bodies on known routes), `model_used`, latency, status).
-* **Metrics**: `/metrics` serves Prometheus text; a lightweight fallback is used if `prometheus_client` isn’t installed.
-
----
-
-## Orchestration (n8n)
-
-* Import `orchestration/n8n_workflows/example_workflow.json` (daily schedule → forecast → recommend).
-* Import `orchestration/n8n_workflows/approval_loop.json` (notify approver via Slack/email, receive decision via webhook, then `POST /approvals`).
-* Set `API_URL` in n8n env (Compose preset: `http://backend:8000/api/v1`). Add header `Authorization: Bearer <token>` if using auth.
-
----
-
-## CI, tests & quality
-
-* **CI**: `.github/workflows/ci.yml` runs ruff, mypy, and pytest with coverage.
-* **Local tests**:
-
-  ```bash
-  pip install -r backend/requirements.txt -r frontend/requirements.txt
-  pip install pytest pytest-cov mypy ruff
-  pytest -q
-  ```
-
-Notes for running tests:
-
-* Leave GEMINI_API_KEY empty so /procure/recommendations/explain returns 404 (expected by tests).
-* Disable auth: leave API_TOKEN empty (or set API_AUTH_DISABLED=1) so TestClient calls aren’t 401.
-
-PowerShell (optional):
-
-```powershell
-Remove-Item Env:GEMINI_API_KEY -ErrorAction SilentlyContinue
-Remove-Item Env:API_TOKEN -ErrorAction SilentlyContinue
-$env:API_AUTH_DISABLED = "1"
-pytest -q
-```
-
-Tests cover forecasts/procure, batch selection, backtesting, catalog IDs, configs, approvals/audit log, data validation, and auth/rate-limit behavior.
-
----
-
-## Render deployment
-
-Two services defined in `render.yaml`:
-
-* **agentive-api** (rootDir `backend`)
-
-  * Build: `pip install -r requirements.txt`
-  * Start: `uvicorn app.main:app --host 0.0.0.0 --port $PORT`
-  * Env: `GEMINI_API_KEY` (optional), `DATA_DIR=/data`, `CONFIG_DIR=/app/configs`, `API_TOKEN` (optional), `CORS_ORIGINS`
-  * Disk: attach a persistent disk (2–5 GB) mounted at `/data` for **audit logs** and **model cache**
-
-* **agentive-ui** (rootDir `frontend`)
-
-  * Build: `pip install -r requirements.txt`
-  * Start: `streamlit run app.py --server.port $PORT --server.address 0.0.0.0`
-  * Env: `API_URL=https://<your-api>.onrender.com/api/v1`
-
-> **⚠️ Memory requirement on Render**
->
-> The API processes sizable M5 datasets. On **Render Free** (~512 MiB RAM), the service will **run out of memory** at startup or on first request.
-> **Upgrade to Starter (or higher)** to run this project reliably. Free tier is not supported for the API.
-> (Streamlit UI may start on Free, but it depends on the API; without the API on a higher plan, features won’t work.)
-
----
-
-## API smoke tests (PowerShell)
-
-```powershell
-# First row id from the sales file
-Get-Content .\data\sales_train_validation.csv -TotalCount 2 | Select-Object -Last 1
-
-# Replace <SKU_ID> and <TOKEN> if auth is enabled
-$base = "http://localhost:8000/api/v1"
-$hdr  = @{ Authorization = "Bearer <TOKEN>" }
-
-iwr "$base/catalog/ids?limit=5" -Headers $hdr
-iwr "$base/forecasts/<SKU_ID>?horizon_days=28" -Headers $hdr
-
-$body = @{ sku_id = "<SKU_ID>"; horizon_days = 28 } | ConvertTo-Json
-iwr -Method Post "$base/procure/recommendations" -Body $body -ContentType "application/json" -Headers $hdr
-```
-
-Expected:
-
-* `/forecasts` → `horizon_days` rows with `date, mean, lo, hi, model, confidence`
-* `/procure/recommendations` → `order_qty, reorder_point, gmroi_delta, confidence, requires_approval`
-
----
-
-## Runbook
-
-* **Backtesting**: Use **Backtest**; compare `auto|sma|prophet|xgb`. Toggle history overlay for context. API returns MAPE & PI coverage + recent history.
-* **Approvals**: In **Recommendations**, Approve/Reject with a note. Review **Audit Log** for the timeline. Attach a Render disk to persist across deploys.
-* **Tuning**:
-
-  * Service level, lead times, carrying cost → `configs/settings.yaml`
-  * Guardrails (`auto_approval_limit`, `min_service_level`, `gmroi_min`) → `configs/thresholds.yaml`
-
----
-
-## Notes & roadmap
-
-Implemented:
-
-* Typeahead & caching, CSV exports, health banner
-* Gemini explanations (optional; 404 when disabled, optional fallback)
-* Config edit & persistence, approvals + audit log
-* Rolling backtesting + per-origin coverage + history overlay
-* GMROI proxy w/ seasonality & store-level prices
-* Model caching under `/data/models`
-* n8n daily and approval workflows
-* CI + Render + Compose, Prometheus `/metrics`
-* Observability: richer logs (now include `sku_id` for POSTs)
-
-Next:
-
-* Deeper backtesting (category/store cross-validation)
-* Richer dashboard KPIs and per-store views
-* Advanced GMROI (event calendars, price mix over time)
-* Stronger auth (JWT/OIDC) and multi-tenant hardening
+# Agentive Inventory
+
+File-backed inventory planning demo built around the Walmart M5 dataset, with a FastAPI backend for forecasting, reorder guidance, approvals, backtests, and a Streamlit review UI.
+
+The repo is structured as a human-in-the-loop loop: load demand history, forecast it, convert that forecast into reorder guidance, and record approve/reject decisions.
+
+## Why This Repository Exists
+
+- Inventory teams need a repeatable way to turn historical sales into reorder decisions without treating the model as a black box.
+- The code applies guardrails around service level, spend, and GMROI before a recommendation can be auto-approved.
+- Backtesting is built in so users can inspect forecast behavior instead of trusting a single output.
+
+## Architecture at a Glance
+
+- The FastAPI app under `/api/v1` exposes health, data validation, catalog IDs, forecasts, backtest, procurement, config, approvals, and metrics routes.
+- Middleware adds optional bearer auth, per-IP rate limiting, JSON request logs, and Prometheus metrics.
+- Forecasting lazily loads M5 sales/calendar/price data, buckets SKUs into A/B/C demand classes, prefers `xgb`/`prophet`/`sma` with fallback by availability and history length, and caches model artifacts under `data/models`.
+- Procurement uses EOQ/ROP logic plus a GMROI proxy and marks recommendations for approval when thresholds or budget constraints are breached.
+- The Streamlit client is a thin REST wrapper with pages for Dashboard, Forecasts, Recommendations, Settings, Backtest, and Audit Log, plus a sidebar API token field.
+- State is file-backed: configs are YAML, approvals are JSONL, model cache is local disk, and `DB_URL`/`sqlmodel` exist but are not wired into runtime persistence.
+- Docker Compose, the n8n example workflow, and `render.yaml` cover local orchestration and deployment wiring; n8n is commented out in the Render config.
+
+## Repository Layout
+
+- `backend/`
+- `configs/`
+- `data/`
+- `frontend/`
+- `orchestration/`
+- `.env.example`
+- `.gitattributes`
+- `.gitignore`
+- `docker-compose.yml`
+- `environment.yml`
+- `pyproject.toml`
+- `README.md`
+- `render.yaml`
+
+## Setup and Run
+
+1. The repo includes the M5 input files under `data/`; the active loaders prefer Parquet when present, and the API paths primarily use the validation, calendar, and price files.
+2. Docker path: copy `.env.example` to `.env`, run `docker compose up --build`, and use the UI on `:8501`, API docs on `:8000/docs`, metrics on `:8000/metrics`, and n8n on `:5678`.
+3. Local path: create the Conda env from `environment.yml`, start `uvicorn backend.app.main:app --reload --port 8000 --env-file .env`, then run `streamlit run frontend/app.py` with `API_URL=http://localhost:8000/api/v1`.
+4. CI already installs the service requirements and runs Ruff, mypy, and pytest on Python 3.11.
+
+## Core Workflows
+
+- Forecast a SKU: pick an M5 row ID from `/catalog/ids`, request `/forecasts/{sku_id}`, and inspect mean, lower/upper bounds, model, and confidence.
+- Generate reorder guidance: call `/procure/recommendations`, review `order_qty`, `reorder_point`, `gmroi_delta`, and `requires_approval`, optionally request `/procure/recommendations/explain`, then approve or reject via `/approvals`.
+- Run batch guidance under budget: submit `sku_ids` with optional `cash_budget`; the service ranks by `gmroi_delta` and marks selected rows.
+- Evaluate model behavior: use `/backtest/{sku_id}` with `window`, `horizon`, `step`, and `model`; the API also supports `detail=true` and `cv=store|category`, and the UI shows a history overlay and coverage tables.
+- Review audit and settings: `/approvals/audit-log` shows approval history, and `/configs/*` reads or writes the YAML settings and thresholds files.
+- Automation loop: the included n8n example schedules a daily forecast, computes recommendations, can add an explanation step, notifies an approver, and posts approval decisions back to the API.
+
+## Known Limitations
+
+- This is not connected to live inventory or order systems: it reads local M5 files, and `get_current_inventory` is a stub that returns `0`.
+- Approval, config, and model state are file-backed only; there is no active database persistence path despite `DB_URL` and `sqlmodel` being present.
+- The Settings page exposes model portfolio controls, but the backend config schema does not accept `model_A`, `model_B`, or `model_C`, and the forecasting service still uses its own hard-coded A/B/C portfolio.
+- The explanation endpoint is disabled by default when `GEMINI_API_KEY` is unset, returning `404` unless fallback mode is explicitly enabled.
+- The n8n workflow is a sample, not production automation, and the Render config leaves n8n commented out.
+- Forecast and backtest requests still depend on the M5 calendar horizon and required files being present, so missing data or an overlong horizon will fail the API.
