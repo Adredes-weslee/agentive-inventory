@@ -8,6 +8,24 @@ The repo is structured as a human-in-the-loop loop: load demand history, forecas
 ![Python](https://img.shields.io/badge/Python-3.11+-3776AB?style=flat-square&logo=python&logoColor=white) ![FastAPI](https://img.shields.io/badge/FastAPI-Service-009688?style=flat-square&logo=fastapi&logoColor=white) ![Streamlit](https://img.shields.io/badge/Streamlit-Review_UI-FF4B4B?style=flat-square&logo=streamlit&logoColor=white)
 
 [![Portfolio Article](https://img.shields.io/badge/Portfolio%20Article-102A43?style=flat-square)](https://adredes-weslee.github.io/ai-ops/forecasting/operations/2026/03/23/human-in-the-loop-inventory-planning.html)
+
+```mermaid
+flowchart LR
+  data["data/<br/>M5 files"]
+  cfg["configs/<br/>settings.yaml + thresholds.yaml"]
+  api["backend/<br/>FastAPI: forecasts, procure, approvals, backtest"]
+  ui["frontend/<br/>Streamlit: dashboard, forecasts, recommendations, audit"]
+  audit["data/approvals_audit_log.jsonl"]
+  n8n["orchestration/<br/>optional n8n workflow"]
+
+  data --> api
+  cfg --> api
+  api --> ui
+  ui -->|approve / reject| api
+  api --> audit
+  n8n -->|scheduled API calls| api
+```
+
 ## Quickstart
 
 ```bash
