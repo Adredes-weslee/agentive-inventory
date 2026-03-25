@@ -4,6 +4,22 @@ File-backed inventory planning demo built around the Walmart M5 dataset, with a 
 
 The repo is structured as a human-in-the-loop loop: load demand history, forecast it, convert that forecast into reorder guidance, and record approve/reject decisions.
 
+<!-- README_SURFACE_START -->
+![Python](https://img.shields.io/badge/Python-3.11+-3776AB?style=flat-square&logo=python&logoColor=white) ![FastAPI](https://img.shields.io/badge/FastAPI-Service-009688?style=flat-square&logo=fastapi&logoColor=white) ![Streamlit](https://img.shields.io/badge/Streamlit-Review_UI-FF4B4B?style=flat-square&logo=streamlit&logoColor=white)
+
+[![Portfolio Article](https://img.shields.io/badge/Portfolio%20Article-102A43?style=flat-square)](https://adredes-weslee.github.io/ai-ops/forecasting/operations/2026/03/23/human-in-the-loop-inventory-planning.html)
+## Quickstart
+
+```bash
+cp .env.example .env
+docker compose up --build
+# UI: http://localhost:8501 | API docs: http://localhost:8000/docs
+```
+
+See [Setup and Run](#setup-and-run) for the full environment and verification path.
+
+<!-- README_SURFACE_END -->
+
 ## Why This Repository Exists
 
 - Inventory teams need a repeatable way to turn historical sales into reorder decisions without treating the model as a black box.
