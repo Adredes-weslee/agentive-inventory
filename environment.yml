@@ -11,6 +11,7 @@ dependencies:
   - uvicorn
   - pydantic
   - pandas
+  - pyarrow
   - numpy
   - scikit-learn
   - xgboost

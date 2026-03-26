@@ -73,8 +73,8 @@ See [Setup and Run](#setup-and-run) for the full environment and verification pa
 ## Setup and Run
 
 1. The repo includes the M5 input files under `data/`; the active loaders prefer Parquet when present, and the API paths primarily use the validation, calendar, and price files.
-2. Docker path: copy `.env.example` to `.env`, run `docker compose up --build`, and use the UI on `:8501`, API docs on `:8000/docs`, metrics on `:8000/metrics`, and n8n on `:5678`.
-3. Local path: create the Conda env from `environment.yml`, start `uvicorn backend.app.main:app --reload --port 8000 --env-file .env`, then run `streamlit run frontend/app.py` with `API_URL=http://localhost:8000/api/v1`.
+2. Docker path: copy `.env.example` to `.env`, run `docker compose up --build`, and use the UI on `:8501`, API docs on `:8000/docs`, metrics on `:8000/metrics`, and n8n on `:5678`. In Compose, `N8N_API_URL` should target the backend API, not the n8n UI.
+3. Local path: create and activate the Conda env from `environment.yml`; it now includes `pyarrow`, which keeps the parquet-preferred loaders usable on a fresh clone. Then start `uvicorn backend.app.main:app --reload --port 8000 --env-file .env` and run `streamlit run frontend/app.py` with `API_URL=http://localhost:8000/api/v1`.
 4. CI already installs the service requirements and runs Ruff, mypy, and pytest on Python 3.11.
 
 ## Core Workflows
